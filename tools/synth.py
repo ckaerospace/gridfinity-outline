@@ -18,7 +18,7 @@ def shape_poly(kind, rng):
 
 COLORS = {'white': (238, 240, 242), 'lightgrey': (205, 205, 208), 'cream': (200, 226, 236), 'blue': (190, 120, 40), 'dark': (50, 52, 58), 'red': (40, 40, 190), 'steel': (150, 150, 156), 'yellow': (60, 200, 235), 'green': (70, 140, 60)}
 
-def make_case(seed, kind, color, tilt, W=2400, H=1800, portrait=False, name=None, out='tests/synth', nomarker=False, sheet='tint', shadow=None, gloss=0.0):
+def make_case(seed, kind, color, tilt, W=2400, H=1800, portrait=False, name=None, out='tests/synth', nomarker=False, sheet='tint', shadow=None, gloss=0.0, height=0.0, fscale=1.0):
     rng = np.random.default_rng(seed)
     poly = shape_poly(kind, rng)
     ang = rng.uniform(0, 180); c, s = math.cos(math.radians(ang)), math.sin(math.radians(ang))
@@ -45,13 +45,13 @@ def make_case(seed, kind, color, tilt, W=2400, H=1800, portrait=False, name=None
         hx, hy = (cx - dx * 2 - 6) * PPM, (cy - dy * 2 - 6) * PPM
         blob = np.exp(-(((xx0 - hx) ** 2 + (yy0 - hy) ** 2) / (2 * (4 * PPM) ** 2)))[..., None]
         obj = obj + (255 - obj) * gloss * blob
-    sheet = sheet * (1 - m) + obj * m
+    if height <= 0: sheet = sheet * (1 - m) + obj * m
     if nomarker:
         for i in range(4):
             ox,oy=[(10,10),(180,10),(10,267),(180,267)][i]; sheet[int(oy*PPM)-2:int((oy+20)*PPM)+2, int(ox*PPM)-2:int((ox+20)*PPM)+2]=255
     # camera
     if portrait: W, H = H, W
-    f = 0.85 * max(W, H) * 1.0
+    f = 0.85 * max(W, H) * fscale
     yaw = rng.uniform(-180, 180) if tilt > 1 else 0
     def Rx(a): a = math.radians(a); return np.array([[1, 0, 0], [0, math.cos(a), -math.sin(a)], [0, math.sin(a), math.cos(a)]])
     def Rz(a): a = math.radians(a); return np.array([[math.cos(a), -math.sin(a), 0], [math.sin(a), math.cos(a), 0], [0, 0, 1]])
@@ -68,6 +68,16 @@ def make_case(seed, kind, color, tilt, W=2400, H=1800, portrait=False, name=None
     img = cv2.warpPerspective(sheet, Hs, (W, H), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT)
     cover = cv2.warpPerspective(np.ones(sheet.shape[:2], np.float32), Hs, (W, H), flags=cv2.INTER_LINEAR)[..., None]
     img = img * cover + bg * (1 - cover)
+    if height > 0:  # tall prism: project base (Z=0) and top (Z=-height, toward the camera) with the full pinhole model, paint side faces darker
+        def proj(x, y, z):
+            v = K @ (Rm @ np.array([x - SW / 2, y - SH / 2, -z]) + t); return v[:2] / v[2]
+        base = np.array([proj(x, y, 0) for x, y in poly]); top = np.array([proj(x, y, height) for x, y in poly])
+        n = len(poly); body = np.array(COLORS[color], np.float32); im8 = np.clip(img, 0, 255).astype(np.uint8)
+        def paint(pts, col): cv2.fillPoly(im8, [np.round(np.array(pts) * 16).astype(np.int32)], tuple(float(v) for v in col), lineType=cv2.LINE_AA, shift=4)
+        for i in range(n):  # side quads, shaded by orientation
+            j = (i + 1) % n; nx, ny = poly[j][1] - poly[i][1], -(poly[j][0] - poly[i][0]); sh_ = 0.62 + 0.25 * (nx * math.cos(1.0) + ny * math.sin(1.0)) / (math.hypot(nx, ny) + 1e-9)
+            paint([base[i], base[j], top[j], top[i]], body * float(np.clip(sh_, 0.45, 0.9)))
+        paint(top, body); img = im8.astype(np.float32)
     # lighting gradient + vignette + paper tint
     yy, xx = np.mgrid[0:H, 0:W].astype(np.float32)
     g = rng.uniform(0.18, 0.32); a = rng.uniform(0, 2 * np.pi)
@@ -82,7 +92,7 @@ def make_case(seed, kind, color, tilt, W=2400, H=1800, portrait=False, name=None
     from make_sheet import ROI
     rc=[[ROI[0],ROI[1]],[ROI[2],ROI[1]],[ROI[2],ROI[3]],[ROI[0],ROI[3]]]
     roi_px=[(lambda v:[v[0]/v[2],v[1]/v[2]])(Hs@np.array([x*PPM,y*PPM,1.0])) for x,y in rc]
-    return {'roi_px_full': roi_px, 'file': f'{name}.jpg', 'kind': kind, 'color': color, 'tilt': tilt, 'size': [W, H], 'sheet': sheet_name, 'gloss': gloss, 'shadow': shadow, 'polygon': poly.tolist(), 'seed': seed}
+    return {'roi_px_full': roi_px, 'file': f'{name}.jpg', 'kind': kind, 'color': color, 'tilt': tilt, 'size': [W, H], 'sheet': sheet_name, 'gloss': gloss, 'shadow': shadow, 'polygon': poly.tolist(), 'seed': seed, 'height': height, 'fscale': fscale}
 
 def hard_set(sheet, out):
     rng = np.random.default_rng(7); cases = []
@@ -95,7 +105,16 @@ def hard_set(sheet, out):
         cases.append(make_case(900 + i, kind, col, float(rng.choice([0, 10, 20, 30, 40])), portrait=(i % 3 == 2), shadow=sh, gloss=0.6 if i % 4 == 1 else 0.0, sheet=sheet, name=f'hard{i:02d}_{kind}_{col}', out=out))
     json.dump(cases, open(f'{out}/gt.json', 'w')); print(len(cases), 'hard cases ->', out)
 
+def tall_set(out):
+    cases = []; i = 0
+    for kind, color in [('rect50x30', 'red'), ('Lshape', 'dark'), ('circle40', 'green')]:
+        for h in (0, 15, 25, 35):
+            for tilt, fs in [(0, 1.0), (15, 1.0), (30, 1.0), (15, 1.3)]:
+                cases.append(make_case(1200 + i, kind, color, float(tilt), height=float(h), fscale=fs, shadow=dict(dir=45, dist=2.0 + h * 0.15, blur=0.5, strength=0.35), name=f'tall{i:02d}_{kind}_h{h}_t{tilt}_f{fs}', out=out)); i += 1
+    json.dump(cases, open(f'{out}/gt.json', 'w')); print(len(cases), 'tall cases ->', out)
+
 if __name__ == '__main__':
+    if len(sys.argv) > 2 and sys.argv[1] == 'tall': tall_set(sys.argv[2]); sys.exit()
     if len(sys.argv) > 2 and sys.argv[1] == 'hard': hard_set(sys.argv[2], sys.argv[3]); sys.exit()
     cases = []
     specs = [('rect50x30', 'dark', 0), ('rect50x30', 'dark', 20), ('rect50x30', 'red', 35), ('rect50x30', 'steel', 45),

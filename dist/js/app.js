@@ -2,7 +2,7 @@ import { initManifold, analyze, buildBin, toSTL, meshOf, findSpot, effective, GF
 import { worldGeometry, toSVG, toDXF } from './export2d.js';
 import { openCapture } from './capture.js';
 import { init3D, setMesh } from './view3d.js';
-import { nearestOnPolygon, pointAtT, rotPt, ensureCCW, centroid } from './geom.js';
+import { nearestOnPolygon, pointAtT, rotPt, ensureCCW, centroid, minRect } from './geom.js';
 
 const $ = (s) => document.querySelector(s);
 const NS = 'http://www.w3.org/2000/svg';
@@ -47,6 +47,7 @@ function renderPlan() {
     el('path', { d: path(g.outline), fill: 'none', stroke: tx, 'stroke-opacity': 0.55, 'stroke-width': 0.3 }, grp);
     const c = centroid(g.outline), t = el('text', { x: c[0], y: c[1], 'text-anchor': 'middle', 'dominant-baseline': 'central', fill: tx, 'font-size': 5, 'font-family': 'system-ui,sans-serif', 'pointer-events': 'none' }, grp);
     t.textContent = r1(info.eff.depth) + ' mm';
+    { const mr = minRect(o.outline), t2 = el('text', { x: c[0], y: c[1] + 5, 'text-anchor': 'middle', 'dominant-baseline': 'central', fill: tx, 'fill-opacity': 0.6, 'font-size': 3.2, 'font-family': 'system-ui,sans-serif', 'pointer-events': 'none' }, grp); t2.textContent = r1(mr.l) + ' x ' + r1(mr.w); }
     g.notches.forEach((n, k) => { el('circle', { cx: n.x, cy: n.y, r: n.r, fill: 'none', stroke: tx, 'stroke-width': 0.4, 'stroke-dasharray': '1.5 1.2', 'pointer-events': 'none' }, grp);
       if (sel) el('circle', { cx: n.x, cy: n.y, r: 3.2, fill: tx, stroke: ac, 'stroke-width': 1, 'data-notch': k, style: 'cursor:grab' }, svg); });
     if (sel) { // rotate handle
@@ -122,6 +123,8 @@ function renderPanel() {
   const mk = (key, label, min, max, step, dv) => field(label, { min, max, step, value: key === 'depth' ? info.eff.depth : info.eff[key], over: o[key] != null,
     onSet: (v) => { o[key] = v; if (key === 'margin') resolveOverlap(o); refresh(); }, onReset: () => { o[key] = null; if (key === 'margin') resolveOverlap(o); refresh(); } });
   box.appendChild(actionsEl(o, i, info));
+  { const mr = minRect(o.outline), pr = minRect(info.poly), n = document.createElement('div'); n.className = 'note'; n.style.cssText = 'font-size:12px;opacity:.75;margin:2px 0 6px';
+    n.textContent = `Object ${r1(mr.l)} x ${r1(mr.w)} mm, pocket ${r1(pr.l)} x ${r1(pr.w)} mm (with ${r1(info.eff.margin)} mm margin; long x short side)`; box.appendChild(n); }
   box.appendChild(mk('depth', 'Depth', 1, P().height.auto ? GF.maxUnits * 7 - P().floor : a.maxDepth, 0.5));
   box.appendChild(mk('margin', 'Margin', 0, 10, 0.1));
   box.appendChild(mk('notch', 'Notch size', 6, 40, 0.5));

@@ -106,3 +106,74 @@ export function pointAtT(p, t) {
   return { pt: p[0], nx: 0, ny: 0 };
 }
 export const rotPt = (p, deg) => { const c = Math.cos(deg * Math.PI / 180), s = Math.sin(deg * Math.PI / 180); return [p[0] * c - p[1] * s, p[0] * s + p[1] * c]; };
+
+// Minimum-area bounding rectangle (rotating calipers over the convex hull). -> {w (short), l (long), angle (deg of the long side), cx, cy}
+export function minRect(p) {
+  const pts = p.map((q) => [q[0], q[1]]).sort((a, b) => a[0] - b[0] || a[1] - b[1]); if (pts.length < 3) return { w: 0, l: 0, angle: 0, cx: 0, cy: 0 };
+  const cr = (o, a, b) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]), lo = [], up = [];
+  for (const q of pts) { while (lo.length >= 2 && cr(lo[lo.length - 2], lo[lo.length - 1], q) <= 0) lo.pop(); lo.push(q); }
+  for (const q of [...pts].reverse()) { while (up.length >= 2 && cr(up[up.length - 2], up[up.length - 1], q) <= 0) up.pop(); up.push(q); }
+  const h = lo.slice(0, -1).concat(up.slice(0, -1)); let best = null;
+  for (let i = 0; i < h.length; i++) {
+    const a = h[i], b = h[(i + 1) % h.length], d = Math.hypot(b[0] - a[0], b[1] - a[1]); if (d < 1e-9) continue;
+    const ux = (b[0] - a[0]) / d, uy = (b[1] - a[1]) / d; let u0 = 1e9, u1 = -1e9, v0 = 1e9, v1 = -1e9;
+    for (const q of h) { const u = q[0] * ux + q[1] * uy, v = -q[0] * uy + q[1] * ux; u0 = Math.min(u0, u); u1 = Math.max(u1, u); v0 = Math.min(v0, v); v1 = Math.max(v1, v); }
+    const A = (u1 - u0) * (v1 - v0); if (!best || A < best.A) best = { A, w: u1 - u0, l: v1 - v0, ang: Math.atan2(uy, ux), u0, u1, v0, v1, ux, uy };
+  }
+  if (!best) return { w: 0, l: 0, angle: 0, cx: 0, cy: 0 };
+  const um = (best.u0 + best.u1) / 2, vm = (best.v0 + best.v1) / 2;
+  let L = best.w, S = best.l, ang = best.ang; if (S > L) { [L, S] = [S, L]; ang += Math.PI / 2; }
+  return { w: S, l: L, angle: ang * 180 / Math.PI, cx: um * best.ux - vm * best.uy, cy: um * best.uy + vm * best.ux };
+}
+// Pinhole camera pose from a sheet(mm) -> image(px) homography. Focal length is NOT known (no EXIF in the browser): fr * long side, default 0.78 (typical phone main camera).
+// -> { x, y, z }: the camera's foot point on the sheet plane (mm) and its height above the sheet (mm). Uncertain by roughly +-30 percent in z (z scales with the focal length).
+export function cameraFromH(H, imgW, imgH, fr = 0.78) {
+  const f = fr * Math.max(imgW, imgH), cx = imgW / 2, cy = imgH / 2;
+  const col = (j) => [(H[j] - cx * H[6 + j]) / f, (H[3 + j] - cy * H[6 + j]) / f, H[6 + j]];
+  const a = col(0), b = col(1), t = col(2); let s = 1 / Math.hypot(...a); if (t[2] < 0) s = -s;
+  const r1 = a.map((v) => v * s), r2 = b.map((v) => v * s), tt = t.map((v) => v * s);
+  const r3 = [r1[1] * r2[2] - r1[2] * r2[1], r1[2] * r2[0] - r1[0] * r2[2], r1[0] * r2[1] - r1[1] * r2[0]];
+  const C = [-(r1[0] * tt[0] + r1[1] * tt[1] + r1[2] * tt[2]), -(r2[0] * tt[0] + r2[1] * tt[1] + r2[2] * tt[2]), -(r3[0] * tt[0] + r3[1] * tt[1] + r3[2] * tt[2])];
+  return { x: C[0], y: C[1], z: Math.abs(C[2]) };
+}
+// Footprint estimate of an object of height h: the visible silhouette is dominated by the top face, which is the base scaled by z/(z-h) about the camera foot point.
+export function correctForHeight(outline, cam, h) {
+  if (!(h > 0) || !cam || h >= cam.z * 0.6) return outline; const k = (cam.z - h) / cam.z;
+  const sc = outline.map(([x, y]) => [cam.x + (x - cam.x) * k, cam.y + (y - cam.y) * k]);
+  // The footprint also lies inside the silhouette itself (base is part of it): clip the shrunken copy by the silhouette's convex hull, removing the part that slid out on the camera side.
+  const hull = convexHull(outline); let sub = sc;
+  const n = hull.length;
+  for (let i = 0; i < n && sub.length; i++) { // Sutherland-Hodgman, hull is CCW (cross > 0 inside)
+    const A = hull[i], B = hull[(i + 1) % n], inside = (q) => (B[0] - A[0]) * (q[1] - A[1]) - (B[1] - A[1]) * (q[0] - A[0]) >= 0, out = [];
+    for (let j = 0; j < sub.length; j++) { const P = sub[j], Q = sub[(j + 1) % sub.length], ip = inside(P), iq = inside(Q);
+      if (ip) out.push(P);
+      if (ip !== iq) { const d1 = (B[0] - A[0]) * (P[1] - A[1]) - (B[1] - A[1]) * (P[0] - A[0]), d2 = (B[0] - A[0]) * (Q[1] - A[1]) - (B[1] - A[1]) * (Q[0] - A[0]), t = d1 / (d1 - d2); out.push([P[0] + (Q[0] - P[0]) * t, P[1] + (Q[1] - P[1]) * t]); } }
+    sub = out; }
+  return sub.length >= 3 ? sub : sc;
+}
+export function convexHull(p) { // CCW in math orientation (y up)
+  const pts = p.map((q) => [q[0], q[1]]).sort((a, b) => a[0] - b[0] || a[1] - b[1]); const cr = (o, a, b) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]), lo = [], up = [];
+  for (const q of pts) { while (lo.length >= 2 && cr(lo[lo.length - 2], lo[lo.length - 1], q) <= 0) lo.pop(); lo.push(q); }
+  for (const q of [...pts].reverse()) { while (up.length >= 2 && cr(up[up.length - 2], up[up.length - 1], q) <= 0) up.pop(); up.push(q); }
+  return lo.slice(0, -1).concat(up.slice(0, -1));
+}
+
+// Corner-preserving contour smoothing. p: closed polyline resampled at `step` mm. sigmaMM: Gaussian sigma along the arc length.
+// Corners (turning angle over +-1.5 mm above ~40 degrees, local maximum) are pinned; each stretch between corners is Gaussian-smoothed with its end points fixed
+// (odd reflection at the ends), so straight edges stay straight and corners stay sharp. Without corners the whole loop is smoothed circularly.
+export function smoothKeepCorners(p, sigmaMM, step) {
+  const n = p.length, sg = sigmaMM / step; if (sg < 0.3 || n < 12) return p;
+  const pre = smooth(p, Math.max(1.5, sg * 0.5)), k = Math.max(3, Math.round(1.5 / step)), ang = new Array(n);
+  for (let i = 0; i < n; i++) { const a = pre[(i - k + n) % n], b = pre[i], c = pre[(i + k) % n]; const v1x = b[0] - a[0], v1y = b[1] - a[1], v2x = c[0] - b[0], v2y = c[1] - b[1];
+    ang[i] = Math.abs(Math.atan2(v1x * v2y - v1y * v2x, v1x * v2x + v1y * v2y)) * 180 / Math.PI; }
+  const corners = []; for (let i = 0; i < n; i++) { if (ang[i] < 25) continue; let mx = true; for (let j = -k; j <= k; j++) if (ang[(i + j + n) % n] > ang[i] || (ang[(i + j + n) % n] === ang[i] && j < 0)) { mx = false; break; } if (mx) corners.push(i); }
+  if (corners.length < 2) return smooth(p, sg);
+  const r = Math.ceil(sg * 3), w = []; let ws = 0; for (let j = -r; j <= r; j++) { const v = Math.exp(-j * j / (2 * sg * sg)); w.push(v); ws += v; }
+  const out = new Array(n);
+  for (let c = 0; c < corners.length; c++) {
+    const s = corners[c], e = corners[(c + 1) % corners.length], len = ((e - s) % n + n) % n || n, seg = []; for (let j = 0; j <= len; j++) seg.push(p[(s + j) % n]);
+    const get = (j) => { if (j < 0) return [2 * seg[0][0] - seg[Math.min(-j, len)][0], 2 * seg[0][1] - seg[Math.min(-j, len)][1]]; if (j > len) return [2 * seg[len][0] - seg[Math.max(2 * len - j, 0)][0], 2 * seg[len][1] - seg[Math.max(2 * len - j, 0)][1]]; return seg[j]; };
+    for (let j = 0; j < len; j++) { if (j === 0) { out[s] = seg[0]; continue; } let x = 0, y = 0; for (let m = -r; m <= r; m++) { const q = get(j + m); x += q[0] * w[m + r]; y += q[1] * w[m + r]; } out[(s + j) % n] = [x / ws, y / ws]; }
+  }
+  return out;
+}

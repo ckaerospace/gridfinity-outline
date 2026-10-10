@@ -45,6 +45,11 @@ Height = number of 7 mm units: the deepest pocket + floor (default 2 mm) rounded
 - Baseplate fit was verified geometrically against the published numbers only, not test-printed. Printer-fit compensation is not included.
 - Geometry is built with manifold-3d (WASM) CSG; the STL export welds vertices on a 0.1 micron grid and drops sliver triangles so it stays closed after float32 rounding. Checked watertight with trimesh (`tests/check_stl.py`).
 
+## Size, height and smoothing
+- The review screen reports the **minimum-area rectangle** (long x short side) of the outline. The axis-aligned box is shown separately; a rotated object has a much bigger axis-aligned box.
+- **Object height** (default 0 = off): tall objects look bigger from above because their top edge is closer to the camera. The app estimates the camera from the sheet homography (focal length guessed as 0.78 x long side, so the camera height is only good to about 30 percent) and, if you enter a height, shrinks the outline toward the point under the camera by (z-h)/z and clips it to the silhouette. The corrected outline is drawn dashed orange. Best practice: shoot from far away and zoom in, camera above the object centre.
+- **Smoothing** slider (0-100, default 40): Gaussian smoothing along the outline (sigma 0.04 mm per unit), corners (turning above 25 degrees) are pinned so straight edges and corners stay.
+
 ## Limits
 - Outline is the silhouette as seen by the camera: exact only for flat objects; tall objects at an angle trace oversize (the app warns with `depth x tan(tilt)`; shoot from above).
 - White objects on the old white (v1) sheet, objects whose colour equals the paper, and a dark neutral object whose darkness equals a deep shadow can still fail (use Add area / Remove area, tolerance and Remove shadow). Shiny or transparent objects segment less well.

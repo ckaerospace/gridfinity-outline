@@ -1,6 +1,6 @@
 // Computer vision pipeline (OpenCV.js): sheet detection, rectification, segmentation, outline tracing. All client-side.
 import { SHEET, codeGrid, markerCorners } from './sheetdef.js';
-import { homography, applyH, inv3, mul3, tiltFromH, rectAspect, area, resample, smooth, rdp, ensureCCW, offsetOutward, bbox } from './geom.js';
+import { homography, applyH, inv3, mul3, tiltFromH, rectAspect, area, resample, smooth, rdp, ensureCCW, offsetOutward, bbox, smoothKeepCorners } from './geom.js';
 
 let cvP = null;
 export function loadCV() {
@@ -44,6 +44,11 @@ export function detectSheet(cv, imageData) {
   const w = imageData.width, h = imageData.height, long = Math.max(w, h);
   const rgba = cv.matFromImageData(imageData), gray = new cv.Mat(), bin = new cv.Mat();
   cv.cvtColor(rgba, gray, cv.COLOR_RGBA2GRAY);
+  { // exposure normalisation: stretch the 1st..99th percentile of the gray image to 0..255 so dark or low-contrast (shaded) photos still show the markers
+    const hist = new Uint32Array(256), d0 = gray.data; for (let i = 0; i < d0.length; i += 3) hist[d0[i]]++;
+    const tot = Math.ceil(d0.length / 3); let a = 0, lo = 0, hi = 255, c = 0; for (; lo < 255; lo++) { c += hist[lo]; if (c > tot * 0.01) break; } c = 0; for (hi = 255; hi > 0; hi--) { c += hist[hi]; if (c > tot * 0.01) break; }
+    if (hi - lo > 20 && hi - lo < 200) { const k = 255 / (hi - lo); gray.convertTo(gray, -1, k, -lo * k); }
+  }
   let blockSize = Math.round(long / 16) | 1; if (blockSize < 31) blockSize = 31;
   cv.adaptiveThreshold(gray, bin, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY_INV, blockSize, 15);
   const contours = new cv.MatVector(), hier = new cv.Mat();
@@ -201,7 +206,9 @@ function flood(seg, sx, sy, tol) { // pixels connected to seed with Lab distance
   return out;
 }
 // tol: distance threshold; edits: [{type:'add'|'remove', x, y}] in rectified px; pick: {x,y}|null
-export function segment(cv, seg, tol, edits = [], pick = null) {
+// smoothS: 0..100 contour smoothing (Gaussian sigma = 0.04 mm per unit along the outline, corners pinned; 0 = only the minimal 0.5 mm filter)
+export const SMOOTH_DEFAULT = 40;
+export function segment(cv, seg, tol, edits = [], pick = null, smoothS = SMOOTH_DEFAULT) {
   const { w, h, s, x0, y0, dist } = seg, n = w * h, m = new cv.Mat(h, w, cv.CV_8U), d = m.data, inset = Math.round(1.5 * s);
   for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) d[y * w + x] = (dist[y * w + x] > tol && x >= 0 && y >= 0) ? 255 : 0;
   const k3 = cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(3, 3)), k5 = cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(5, 5));
@@ -220,7 +227,7 @@ export function segment(cv, seg, tol, edits = [], pick = null) {
     const fill = cv.Mat.zeros(h, w, cv.CV_8U), mv = new cv.MatVector(); mv.push_back(c); cv.drawContours(fill, mv, 0, new cv.Scalar(255), -1); mv.delete();
     res.mask = fill; c.delete();
     let mm = pts.map(([x, y]) => [x0 + x / s, y0 + y / s]); mm = ensureCCW(mm);
-    mm = resample(mm, 0.25); mm = smooth(mm, 2); mm = offsetOutward(mm, 0.0 / s); mm = rdp(mm, 0.06);
+    mm = resample(mm, 0.25); mm = smoothS <= 12 ? smooth(mm, 2) : smoothKeepCorners(mm, 0.04 * smoothS, 0.25); mm = offsetOutward(mm, 0.0 / s); mm = rdp(mm, 0.06 + 0.0015 * smoothS);
     const bb = bbox(mm); res.outline = mm; res.ok = true; res.areaMM2 = Math.abs(area(mm)); res.bbox = bb;
   }
   m.delete(); contours.delete(); hier.delete();

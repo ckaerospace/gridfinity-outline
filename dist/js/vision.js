@@ -132,39 +132,65 @@ function blurSmall(cv, ch32, w, h, sigma) { // single-channel float array (small
   const m = cv.matFromArray(h, w, cv.CV_32F, ch32), o = new cv.Mat(); cv.GaussianBlur(m, o, new cv.Size(0, 0), sigma, sigma, cv.BORDER_REPLICATE);
   const r = Float32Array.from(o.data32F); m.delete(); o.delete(); return r;
 }
-// Build per-pixel "difference from paper" map, robust to grid lines (morphological closing) and lighting gradients.
-export function prepareSeg(cv, rect) {
+// Build per-pixel "difference from paper" map, robust to grid lines (morphological closing), lighting gradients and cast shadows.
+// Works in the log-RGB domain: d = log(pixel) - log(paper estimate). Its mean m is a lightness change (m < 0: darker), its
+// per-channel remainder c is a chromaticity change. A cast shadow is mostly m < 0 with a chroma shift roughly proportional to
+// |m|; a pale or white object has m ~ 0 but a colour that differs from the paper. See computeDist().
+const LNT = new Float32Array(256).map((_, i) => Math.log(i + 1));
+export const SHADOW_DEFAULT = 85; // percent
+export function prepareSeg(cv, rect, shadow = SHADOW_DEFAULT) {
   const { w, h, mat } = rect, rgb = new cv.Mat(), closed = new cv.Mat(), lab = new cv.Mat();
   cv.cvtColor(mat, rgb, cv.COLOR_RGBA2RGB);
   const k = cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(7, 7)); cv.morphologyEx(rgb, closed, cv.MORPH_CLOSE, k); k.delete();
   cv.cvtColor(closed, lab, cv.COLOR_RGB2Lab);
-  const n = w * h, L = new Float32Array(n), A = new Float32Array(n), B = new Float32Array(n), d = lab.data;
-  for (let i = 0; i < n; i++) { L[i] = d[3 * i]; A[i] = d[3 * i + 1]; B[i] = d[3 * i + 2]; }
+  const n = w * h, L = new Float32Array(n), A = new Float32Array(n), B = new Float32Array(n), d = lab.data, cd = closed.data;
+  const lr = [new Float32Array(n), new Float32Array(n), new Float32Array(n)];
+  for (let i = 0; i < n; i++) { L[i] = d[3 * i]; A[i] = d[3 * i + 1]; B[i] = d[3 * i + 2]; lr[0][i] = LNT[cd[3 * i]]; lr[1][i] = LNT[cd[3 * i + 1]]; lr[2][i] = LNT[cd[3 * i + 2]]; }
   rgb.delete(); closed.delete(); lab.delete();
-  // low-res illumination estimate with masked (object-excluded) averaging
-  const f = 8, sw = Math.ceil(w / f), sh = Math.ceil(h / f), sn = sw * sh, down = (ch) => { const o = new Float32Array(sn), c = new Float32Array(sn); for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) { const j = ((y / f) | 0) * sw + ((x / f) | 0); o[j] += ch[y * w + x]; c[j]++; } for (let j = 0; j < sn; j++) o[j] /= c[j] || 1; return o; };
-  const sL = down(L), sA = down(A), sB = down(B);
-  let mask = new Float32Array(sn).fill(1), il = [sL, sA, sB];
-  for (let pass = 0; pass < 4; pass++) {
-    const num = [sL, sA, sB].map((c) => blurSmall(cv, c.map((v, i) => v * mask[i]), sw, sh, 6)), den = blurSmall(cv, mask, sw, sh, 6);
-    const base = [sL, sA, sB].map((c) => blurSmall(cv, c, sw, sh, 10));
-    il = num.map((nm, c) => nm.map((v, i) => (den[i] > 0.08 ? v / den[i] : base[c][i])));
-    mask = new Float32Array(sn); for (let i = 0; i < sn; i++) { const dd = Math.hypot(0.8 * (sL[i] - il[0][i]), sA[i] - il[1][i], sB[i] - il[2][i]); mask[i] = dd < 14 ? 1 : 0; }
+  // low-res paper (illumination) estimate in log space with iteratively re-weighted, object/shadow-excluded averaging
+  const f = 8, sw = Math.ceil(w / f), sh = Math.ceil(h / f), sn = sw * sh;
+  const down = (ch) => { const o = new Float32Array(sn), c = new Float32Array(sn); for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) { const j = ((y / f) | 0) * sw + ((x / f) | 0); o[j] += ch[y * w + x]; c[j]++; } for (let j = 0; j < sn; j++) o[j] /= c[j] || 1; return o; };
+  const sl = lr.map(down), base = sl.map((c) => blurSmall(cv, c, sw, sh, 30));
+  let il = sl.map((c) => blurSmall(cv, c, sw, sh, 20)), mask = new Float32Array(sn).fill(1);
+  for (let pass = 0; pass < 6; pass++) {
+    const dd = new Float32Array(sn);
+    for (let i = 0; i < sn; i++) { const m0 = ((sl[0][i] - il[0][i]) + (sl[1][i] - il[1][i]) + (sl[2][i] - il[2][i])) / 3; dd[i] = Math.hypot(100 * m0, 450 * Math.hypot(sl[0][i] - il[0][i] - m0, sl[1][i] - il[1][i] - m0, sl[2][i] - il[2][i] - m0)); }
+    const srt = Float32Array.from(dd).sort(), thr = Math.max(4, 3 * srt[sn >> 1]);
+    const m0 = new Float32Array(sn); for (let i = 0; i < sn; i++) m0[i] = dd[i] < thr ? 1 : 0;
+    // erode by one low-res pixel so object edges and penumbra do not leak into the paper estimate
+    for (let y = 0; y < sh; y++) for (let x = 0; x < sw; x++) { let v = 1; for (let dy = -1; dy <= 1 && v; dy++) for (let dx = -1; dx <= 1; dx++) { const yy = y + dy, xx = x + dx; if (yy >= 0 && xx >= 0 && yy < sh && xx < sw && !m0[yy * sw + xx]) { v = 0; break; } } mask[y * sw + x] = v; }
+    const den = blurSmall(cv, mask, sw, sh, 10);
+    il = sl.map((c, ch) => { const nm = blurSmall(cv, c.map((v, i) => v * mask[i]), sw, sh, 10); return nm.map((v, i) => (den[i] > 0.05 ? v / den[i] : base[ch][i])); });
   }
   const up = (c) => { const m = cv.matFromArray(sh, sw, cv.CV_32F, c), o = new cv.Mat(); cv.resize(m, o, new cv.Size(w, h), 0, 0, cv.INTER_LINEAR); const r = Float32Array.from(o.data32F); m.delete(); o.delete(); return r; };
-  const iL = up(il[0]), iA = up(il[1]), iB = up(il[2]), dist = new Float32Array(n);
-  for (let i = 0; i < n; i++) dist[i] = Math.hypot(0.8 * (L[i] - iL[i]), A[i] - iA[i], B[i] - iB[i]);
-  // Default tolerance: the iso-level of the distance map whose boundary has the strongest gradient (a crisp object edge,
-  // not the soft ramp of a cast shadow). Searched over 6..90.
-  const sumG = new Float64Array(96), cnt = new Float64Array(96);
-  for (let y = 3; y < h - 3; y++) for (let x = 3; x < w - 3; x++) {
-    const i = y * w + x, v = dist[i], gx = Math.abs(dist[i + 1] - dist[i - 1]) * 0.5, gy = Math.abs(dist[i + w] - dist[i - w]) * 0.5, g = Math.hypot(gx, gy);
-    if (g < 0.5) continue; const lo = Math.max(4, (v - g) | 0), hi = Math.min(95, (v + g) | 0);
-    for (let t = lo; t <= hi; t++) { sumG[t] += g; cnt[t]++; }
+  const ilf = il.map(up), M = new Float32Array(n), C = new Float32Array(n);
+  for (let i = 0; i < n; i++) { const d0 = lr[0][i] - ilf[0][i], d1 = lr[1][i] - ilf[1][i], d2 = lr[2][i] - ilf[2][i], m0 = (d0 + d1 + d2) / 3; M[i] = m0; C[i] = Math.hypot(d0 - m0, d1 - m0, d2 - m0); }
+  const seg = { w, h, s: rect.s, x0: rect.x0, y0: rect.y0, M, C, L, A, B, dist: new Float32Array(n), shadow };
+  computeDist(seg, shadow);
+  return seg;
+}
+// Distance map for a given shadow-removal strength (0..100 percent).
+// darkening is down-weighted (shadows are darker, objects that are pale are not) and the chroma that a shadow of that depth would
+// explain (about 0.17 x |m|, measured on real photos: shadows in warm light shift colour as they darken) is subtracted.
+export function computeDist(seg, shadow) {
+  const { M, C, dist } = seg, n = dist.length, ss = Math.max(0, Math.min(100, shadow)) / 100, wd = Math.max(0.04, 1 - 1.06 * ss), kc = 0.3 * ss;
+  for (let i = 0; i < n; i++) { const m = M[i], dk = m < 0 ? -m : 0, c = Math.max(0, C[i] - kc * Math.min(dk, 1.0)), lum = m < 0 ? Math.min(dk, 1.05) * wd + Math.max(0, dk - 1.05) : m; dist[i] = Math.hypot(100 * lum, 450 * c); } // darkening beyond ~ratio 0.35 is too deep for a shadow: counted in full
+  seg.shadow = shadow; seg.autoTol = autoTolerance(seg);
+}
+function autoTolerance(seg) {
+  // Default tolerance = the most STABLE threshold: the one where the foreground area changes least when the threshold moves
+  // (a plateau: object edge is crisp, shadow penumbra and noise are not). Candidates must keep >= 60 % of the area found at
+  // tolerance 16 so a plateau on a tiny leftover (e.g. only a shadow edge) is not chosen.
+  const { dist, s } = seg, n = dist.length, hist = new Float64Array(100);
+  for (let i = 0; i < n; i++) hist[Math.min(99, dist[i] | 0)]++;
+  const A = new Float64Array(101); for (let t = 99; t >= 0; t--) A[t] = A[t + 1] + hist[t]; // A[t] = #pixels with dist >= t
+  const minA = 25 * s * s, ref = A[16]; let best = 1e9, thr = 24;
+  for (let t = 10; t <= 80; t++) {
+    if (A[t] < Math.max(minA, 0.6 * ref)) continue;
+    const r = (A[t - 3] - A[t + 3]) / (6 * A[t]) + 0.00002 * t; // relative slope, tiny bias toward lower tolerance on ties
+    if (r < best) { best = r; thr = t; }
   }
-  let best = -1, thr = 24;
-  for (let t = 6; t <= 90; t++) { if (cnt[t] < 150) continue; const m = sumG[t] / cnt[t] * Math.min(1, cnt[t] / 600); if (m > best * 1.0001) { best = m; thr = t; } }
-  return { w, h, s: rect.s, x0: rect.x0, y0: rect.y0, dist, L, A, B, autoTol: Math.max(10, Math.min(80, thr)) };
+  return Math.max(10, Math.min(80, thr));
 }
 
 function flood(seg, sx, sy, tol) { // pixels connected to seed with Lab distance to seed <= tol

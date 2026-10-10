@@ -16,9 +16,9 @@ def shape_poly(kind, rng):
     else: raise ValueError(kind)
     return p
 
-COLORS = {'dark': (50, 52, 58), 'red': (40, 40, 190), 'steel': (150, 150, 156), 'yellow': (60, 200, 235), 'green': (70, 140, 60)}
+COLORS = {'white': (238, 240, 242), 'lightgrey': (205, 205, 208), 'cream': (200, 226, 236), 'blue': (190, 120, 40), 'dark': (50, 52, 58), 'red': (40, 40, 190), 'steel': (150, 150, 156), 'yellow': (60, 200, 235), 'green': (70, 140, 60)}
 
-def make_case(seed, kind, color, tilt, W=2400, H=1800, portrait=False, name=None, out='tests/synth', nomarker=False):
+def make_case(seed, kind, color, tilt, W=2400, H=1800, portrait=False, name=None, out='tests/synth', nomarker=False, sheet='tint', shadow=None, gloss=0.0):
     rng = np.random.default_rng(seed)
     poly = shape_poly(kind, rng)
     ang = rng.uniform(0, 180); c, s = math.cos(math.radians(ang)), math.sin(math.radians(ang))
@@ -26,16 +26,26 @@ def make_case(seed, kind, color, tilt, W=2400, H=1800, portrait=False, name=None
     r = np.abs(poly).max(0)
     cx = rng.uniform(10 + r[0] + 6, 200 - r[0] - 6); cy = rng.uniform(36 + r[1] + 6, 261 - r[1] - 6)
     poly = poly + [cx, cy]
-    sheet = render_sheet(PPM).astype(np.float32)
+    sheet_name = sheet
+    sheet = render_sheet(PPM, v2=(sheet == 'tint')).astype(np.float32)
     # soft shadow + object
     mask = np.zeros(sheet.shape[:2], np.uint8)
     cv2.fillPoly(mask, [np.round(poly * PPM * 16).astype(np.int32)], 255, lineType=cv2.LINE_AA, shift=4)
-    sh = cv2.GaussianBlur(np.roll(mask, (int(2 * PPM), int(2 * PPM)), (0, 1)).astype(np.float32) / 255, (0, 0), 2.5 * PPM / 2)
-    sheet *= (1 - 0.28 * sh)[..., None]
+    if shadow is None: shadow = dict(dir=45, dist=2.8, blur=1.25, strength=0.28)   # legacy soft shadow
+    dx, dy = shadow['dist'] * math.cos(math.radians(shadow['dir'])), shadow['dist'] * math.sin(math.radians(shadow['dir']))
+    M = np.float32([[1, 0, dx * PPM], [0, 1, dy * PPM]])
+    sh = cv2.GaussianBlur(cv2.warpAffine(mask, M, (mask.shape[1], mask.shape[0])).astype(np.float32) / 255, (0, 0), max(0.3, shadow['blur']) * PPM)
+    sheet *= (1 - shadow['strength'] * sh)[..., None] * (1 - 0.06 * sh)[..., None] * np.array([1.0, 0.985, 0.96], np.float32)[None, None] ** sh[..., None]
     m = (mask.astype(np.float32) / 255)[..., None]
     col = np.array(COLORS[color], np.float32)
     tex = 1 + 0.06 * cv2.GaussianBlur(rng.standard_normal(mask.shape).astype(np.float32), (0, 0), 3)[..., None]
-    sheet = sheet * (1 - m) + col * tex * m
+    obj = col * tex
+    if gloss > 0:  # glossy highlight: soft bright blob + a thin specular streak, clipped to the object
+        yy0, xx0 = np.mgrid[0:mask.shape[0], 0:mask.shape[1]].astype(np.float32)
+        hx, hy = (cx - dx * 2 - 6) * PPM, (cy - dy * 2 - 6) * PPM
+        blob = np.exp(-(((xx0 - hx) ** 2 + (yy0 - hy) ** 2) / (2 * (4 * PPM) ** 2)))[..., None]
+        obj = obj + (255 - obj) * gloss * blob
+    sheet = sheet * (1 - m) + obj * m
     if nomarker:
         for i in range(4):
             ox,oy=[(10,10),(180,10),(10,267),(180,267)][i]; sheet[int(oy*PPM)-2:int((oy+20)*PPM)+2, int(ox*PPM)-2:int((ox+20)*PPM)+2]=255
@@ -72,9 +82,21 @@ def make_case(seed, kind, color, tilt, W=2400, H=1800, portrait=False, name=None
     from make_sheet import ROI
     rc=[[ROI[0],ROI[1]],[ROI[2],ROI[1]],[ROI[2],ROI[3]],[ROI[0],ROI[3]]]
     roi_px=[(lambda v:[v[0]/v[2],v[1]/v[2]])(Hs@np.array([x*PPM,y*PPM,1.0])) for x,y in rc]
-    return {'roi_px_full': roi_px, 'file': f'{name}.jpg', 'kind': kind, 'color': color, 'tilt': tilt, 'size': [W, H], 'polygon': poly.tolist(), 'seed': seed}
+    return {'roi_px_full': roi_px, 'file': f'{name}.jpg', 'kind': kind, 'color': color, 'tilt': tilt, 'size': [W, H], 'sheet': sheet_name, 'gloss': gloss, 'shadow': shadow, 'polygon': poly.tolist(), 'seed': seed}
+
+def hard_set(sheet, out):
+    rng = np.random.default_rng(7); cases = []
+    cols = ['white', 'white', 'lightgrey', 'cream', 'white', 'lightgrey', 'steel', 'dark', 'blue', 'cream']
+    kinds = ['rect50x30', 'circle40', 'Lshape', 'wrench', 'ellipse60x25', 'rect12x80']
+    for i in range(24):
+        col = cols[i % len(cols)]; kind = kinds[i % len(kinds)]
+        hard = i % 2 == 0
+        sh = dict(dir=float(rng.uniform(0, 360)), dist=float(rng.uniform(2, 6) if hard else rng.uniform(1.5, 4)), blur=0.5 if hard else float(rng.uniform(2, 3.5)), strength=float(rng.uniform(0.3, 0.6) if hard else rng.uniform(0.15, 0.4)))
+        cases.append(make_case(900 + i, kind, col, float(rng.choice([0, 10, 20, 30, 40])), portrait=(i % 3 == 2), shadow=sh, gloss=0.6 if i % 4 == 1 else 0.0, sheet=sheet, name=f'hard{i:02d}_{kind}_{col}', out=out))
+    json.dump(cases, open(f'{out}/gt.json', 'w')); print(len(cases), 'hard cases ->', out)
 
 if __name__ == '__main__':
+    if len(sys.argv) > 2 and sys.argv[1] == 'hard': hard_set(sys.argv[2], sys.argv[3]); sys.exit()
     cases = []
     specs = [('rect50x30', 'dark', 0), ('rect50x30', 'dark', 20), ('rect50x30', 'red', 35), ('rect50x30', 'steel', 45),
              ('circle40', 'dark', 15), ('circle40', 'green', 30), ('Lshape', 'red', 25), ('wrench', 'steel', 20), ('wrench', 'dark', 40),

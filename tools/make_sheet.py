@@ -6,7 +6,10 @@ ORIGINS = [(10, 10), (180, 10), (10, 267), (180, 267)]
 CODES = [7, 27, 28, 45]
 ROI = (10, 36, 200, 261)
 MINOR, MAJOR = 10, 50
-MINOR_RGB, MAJOR_RGB = (206, 216, 226), (176, 191, 207)
+MINOR_RGB, MAJOR_RGB = (206, 216, 226), (176, 191, 207)   # legacy white sheet (v1)
+# v2 sheet: object area printed in a mid-tone blue-teal so white / pale / grey objects separate from it (chroma + lightness).
+TINT_RGB, TINT_MINOR_RGB, TINT_MAJOR_RGB = (150, 192, 210), (128, 172, 192), (100, 146, 168)
+V2 = True
 
 def code_grid(i):
     return [[(CODES[i] >> (3 * r + c)) & 1 for c in range(3)] for r in range(3)]
@@ -24,6 +27,8 @@ def svg():
     s = [f'<svg xmlns="http://www.w3.org/2000/svg" width="{W}mm" height="{H}mm" viewBox="0 0 {W} {H}">',
          f'<rect width="{W}" height="{H}" fill="#fff"/>']
     x0, y0, x1, y1 = ROI
+    MINOR_RGB, MAJOR_RGB = (TINT_MINOR_RGB, TINT_MAJOR_RGB) if V2 else (globals()['MINOR_RGB'], globals()['MAJOR_RGB'])
+    if V2: s.append(f'<rect x="{x0}" y="{y0}" width="{x1-x0}" height="{y1-y0}" fill="rgb{TINT_RGB}"/>')
     for x in range(x0, x1 + 1, MINOR):
         major = (x - x0) % MAJOR == 0
         s.append(f'<line x1="{x}" y1="{y0}" x2="{x}" y2="{y1}" stroke="rgb{MAJOR_RGB if major else MINOR_RGB}" stroke-width="{0.35 if major else 0.2}"/>')
@@ -40,11 +45,14 @@ def svg():
     s.append('</svg>')
     return '\n'.join(s)
 
-def render_sheet(ppm=10):
-    """BGR raster of the sheet at ppm pixels per mm (no text)."""
+def render_sheet(ppm=10, v2=None):
+    """BGR raster of the sheet at ppm pixels per mm (no text). v2=False renders the legacy white sheet."""
+    v2 = V2 if v2 is None else v2
+    MINOR_RGB, MAJOR_RGB = (TINT_MINOR_RGB, TINT_MAJOR_RGB) if v2 else (globals()['MINOR_RGB'], globals()['MAJOR_RGB'])
     img = np.full((H * ppm, W * ppm, 3), 255, np.uint8)
     x0, y0, x1, y1 = ROI
     P = lambda v: int(round(v * ppm))
+    if v2: img[P(y0):P(y1), P(x0):P(x1)] = TINT_RGB[::-1]
     for x in range(x0, x1 + 1, MINOR):
         major = (x - x0) % MAJOR == 0; c = (MAJOR_RGB if major else MINOR_RGB)[::-1]
         cv2.line(img, (P(x), P(y0)), (P(x), P(y1)), c, max(1, P(0.35 if major else 0.2)), cv2.LINE_AA)

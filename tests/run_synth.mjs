@@ -1,8 +1,8 @@
 import { chromium } from 'playwright';
 import fs from 'fs';
 const URL = process.env.URL || 'http://localhost:8123/';
-const dir = 'tests/synth', gt = JSON.parse(fs.readFileSync(dir + '/gt.json'));
-const only = process.argv[2];
+const dir = process.env.DIR || 'tests/synth', gt = JSON.parse(fs.readFileSync(dir + '/gt.json'));
+const only = process.argv[2] && process.argv[2] !== '-' ? process.argv[2] : null; const OUT = process.env.OUT || 'tests/synth_results.json';
 const browser = await chromium.launch();
 const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
 const page = await ctx.newPage();
@@ -20,5 +20,5 @@ for (const c of gt) {
   console.log(c.file, JSON.stringify({ cal: r.cal, t: r.timing && Object.fromEntries(Object.entries(r.timing).map(([k, v]) => [k, Math.round(v)])), n: r.outline?.length, manual: r.manual, err: r.err }));
   await page.click('[data-x]');
 }
-fs.writeFileSync('tests/synth_results.json', JSON.stringify(out));
+fs.writeFileSync(OUT, JSON.stringify(out));
 await browser.close();

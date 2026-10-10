@@ -1,4 +1,4 @@
-const V = 'gf-outline-v1';
+const V = 'gf-outline-v2';
 const FILES = ['./', 'index.html', 'style.css', 'manifest.webmanifest', 'sheet.html', 'sheet.svg', 'sheet.pdf', 'icons/icon-192.png', 'icons/icon-512.png',
   'js/app.js', 'js/bin.js', 'js/capture.js', 'js/export2d.js', 'js/geom.js', 'js/sheetdef.js', 'js/view3d.js', 'js/vision.js',
   'vendor/manifold.js', 'vendor/manifold.wasm', 'vendor/three.module.js', 'vendor/three.core.js', 'vendor/OrbitControls.js', 'vendor/opencv.js'];

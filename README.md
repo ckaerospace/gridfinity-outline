@@ -24,11 +24,13 @@ If the markers cannot be found the app offers **manual calibration**: tap four c
 A4 portrait 210 x 297 mm, origin top-left, x right, y down.
 - 4 markers, each 20 x 20 mm, top-left corners at (10,10) id0, (180,10) id1, (10,267) id2, (180,267) id3. They sit 10 mm inside the page edge, so a printer margin of up to about 5 mm is safe.
 - Marker = 5 x 5 grid of 4 mm cells. The outer ring of 16 cells is black. The inner 3 x 3 cells hold a 9-bit code (1 = black, bit index = 3*row + col): ids 0..3 = 7, 27, 28, 45. All 16 rotations of the four codes are distinct with Hamming distance >= 3, so each marker gives its id and orientation (ArUco-like). All 16 outer corners are used for the homography (>= 3 markers needed, 12 corners).
-- Grid: 10 mm lines (RGB 206,216,226, 0.2 mm) and 50 mm lines (RGB 176,191,207, 0.35 mm), only inside the object area x 10..200, y 36..261 mm. Pale lines are suppressed by morphological closing, so they are not mistaken for the object. A 100 mm scale bar is at y = 283 mm.
+- Object area x 10..200, y 36..261 mm is printed in a **mid-tone blue-teal (RGB 150,192,210)** (sheet v2) so white, cream and light-grey objects contrast with it; the margins and markers stay white. Grid: 10 mm lines (RGB 128,172,192, 0.2 mm) and 50 mm lines (RGB 100,146,168, 0.35 mm). Thin lines are suppressed by morphological closing. Marker geometry is unchanged, so **a sheet printed with the old white design (v1) still calibrates identically**; only pale-object segmentation is weaker on it. Uses more ink; any plain colour printer works. A 100 mm scale bar is at y = 283 mm.
 - Output of rectification: top-down image of that 190 x 225 mm area at 4 px/mm.
 
 ## Segmentation and outline
-Closing (7x7) removes the thin grid lines; the paper colour field is estimated at low resolution with object-masked averaging (handles lighting gradients); the per-pixel difference in Lab (L weighted 0.8) is thresholded. The default tolerance is the iso-level with the strongest edge gradient, which picks a crisp object edge over the soft ramp of a cast shadow. Largest blob (or the tapped one), holes filled, contour resampled at 0.25 mm, Gaussian-smoothed (sigma 0.5 mm), simplified (Douglas-Peucker 0.06 mm).
+Closing (7x7) removes the thin grid lines. The paper (illumination) field is estimated at low resolution in **log-RGB** with iteratively re-weighted averaging that excludes objects and shadows. Per pixel d = log(pixel) - log(paper): its mean m is a lightness change (m < 0 darker), the rest C is a chromaticity change. A cast shadow is darker with a colour shift roughly proportional to its depth, a pale or white object is about as bright as the paper but has a different colour. So the distance is
+`hypot(100 * lum, 450 * max(0, C - k*|m|))`, where darkening is down-weighted and the chroma a shadow of that depth would explain is subtracted; both scale with the **Remove shadow** setting (0..100, default 85; slider plus typeable number in the review screen). Darkening deeper than ratio 0.35 is counted in full (too dark for a shadow). If nothing is found the app retries with less shadow removal (40, then 0). Lower Remove shadow if a dark or grey object on a white sheet is cut off, raise it if a shadow is included.
+The default tolerance is the **most stable threshold**: where the foreground area changes least when the threshold moves, restricted to candidates that keep at least 60 percent of the area found at tolerance 16 (so a lone shadow edge is not chosen). Largest blob (or the tapped one), holes filled, contour resampled at 0.25 mm, Gaussian-smoothed (sigma 0.5 mm), simplified (Douglas-Peucker 0.06 mm).
 
 ## Gridfinity geometry (checked against Zack Freedman's spec as documented by gridfinity-rebuilt-openscad and community docs)
 42 mm pitch, 7 mm height unit, bin footprint 41.5 mm (0.25 mm clearance per side; bin outer = 42n - 0.5 mm), top corner radius 3.75 mm.
@@ -45,7 +47,8 @@ Height = number of 7 mm units: the deepest pocket + floor (default 2 mm) rounded
 
 ## Limits
 - Outline is the silhouette as seen by the camera: exact only for flat objects; tall objects at an angle trace oversize (the app warns with `depth x tan(tilt)`; shoot from above).
-- Pale or white objects on white paper, shiny or transparent objects segment poorly (use Add area / Remove area).
+- White objects on the old white (v1) sheet, objects whose colour equals the paper, and a dark neutral object whose darkness equals a deep shadow can still fail (use Add area / Remove area, tolerance and Remove shadow). Shiny or transparent objects segment less well.
+- The shadow model (chroma ~ 0.3 x depth) was calibrated on one real photo set under warm light; other lighting may need the slider.
 - No lens distortion model; focal length assumed about 0.78 x long side for the tilt warning only (the homography itself needs no focal length).
 - One connected region per photo (merge parts with Add area).
 - Not tested on a real iPhone/Safari (headless Chromium only).
@@ -56,6 +59,9 @@ Height = number of 7 mm units: the deepest pocket + floor (default 2 mm) rounded
     .venv/bin/python tools/synth.py              # synthetic photos + ground truth -> tests/synth
     node tests/run_synth.mjs && .venv/bin/python tests/metrics.py      # accuracy through the real app in headless Chromium
     node tests/run_manual.mjs && .venv/bin/python tests/metrics.py tests/manual_results.json   # manual 4-corner mode
+    .venv/bin/python tools/synth.py hard tint tests/hard_tint   # 24 white / pale / glossy / hard+soft shadow cases (use 'white' for the old sheet)
+    DIR=tests/hard_tint OUT=/tmp/r.json node tests/run_synth.mjs && .venv/bin/python tests/compare.py /tmp/r.json
+    node tests/run_real2.mjs after                # the two real phone photos in tests/real (white part + hard shadow, blue floss box)
     node tests/ui_flow.mjs                       # full phone flow + screenshots + exports (needs server on :8123)
     node tests/e2e_stl.mjs <photo> out.stl && .venv/bin/python tests/check_stl.py out.stl
     node tests/offline.mjs                       # service worker offline check

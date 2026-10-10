@@ -1,5 +1,5 @@
 // Capture flow: pick photo -> detect sheet (or manual 4-corner) -> rectify -> segment -> review -> outline
-import { loadCV, decodePhoto, detectSheet, manualCalibration, rectify, prepareSeg, segment } from './vision.js';
+import { loadCV, decodePhoto, detectSheet, manualCalibration, rectify, prepareSeg, computeDist, segment, SHADOW_DEFAULT } from './vision.js';
 import { bbox, centroid } from './geom.js';
 
 const $ = (h) => { const t = document.createElement('template'); t.innerHTML = h.trim(); return t.content.firstChild; };
@@ -7,7 +7,7 @@ export const debug = { last: null };
 
 export function openCapture(root, { depth = 20, title = 'Add object' } = {}) {
   return new Promise((resolve) => {
-    let cv = null, photo = null, cal = null, rect = null, seg = null, res = null, edits = [], pick = null, tol = 24, mode = 'pick', closed = false;
+    let cv = null, photo = null, cal = null, rect = null, seg = null, res = null, edits = [], pick = null, tol = 24, shadow = 85, mode = 'pick', closed = false;
     const done = (v) => { if (closed) return; closed = true; if (rect) rect.mat.delete(); root.hidden = true; root.innerHTML = ''; resolve(v); };
     root.hidden = false;
     const head = (t) => `<div class="ov-head"><h2>${t}</h2><button class="ghost" data-x>Cancel</button></div>`;
@@ -47,10 +47,13 @@ export function openCapture(root, { depth = 20, title = 'Add object' } = {}) {
       busy('Tracing outline'); await new Promise((r) => setTimeout(r, 20));
       const t2 = performance.now(); if (rect) rect.mat.delete();
       rect = rectify(cv, photo.imageData, cal); T.rectify = performance.now() - t2;
-      const t3 = performance.now(); seg = prepareSeg(cv, rect); T.prep = performance.now() - t3;
+      const t3 = performance.now(); shadow = SHADOW_DEFAULT; seg = prepareSeg(cv, rect, shadow); T.prep = performance.now() - t3;
       tol = Math.round(seg.autoTol); edits = []; pick = null; mode = 'pick';
-      const t4 = performance.now(); runSeg(); T.segment = performance.now() - t4; T.total = performance.now() - t0;
-      debug.last.timing = T; debug.last.tol = tol; debug.last.outline = res.outline; debug.last.rectSize = [rect.w, rect.h];
+      const t4 = performance.now(); runSeg();
+      for (const alt of [40, 0]) { if (res.ok) break; shadow = alt; computeDist(seg, shadow); tol = Math.round(seg.autoTol); runSeg(); }
+      /* nothing found: shadow removal may have erased a dark object */
+      T.segment = performance.now() - t4; T.total = performance.now() - t0;
+      debug.last.timing = T; debug.last.tol = tol; debug.last.shadow = shadow; debug.last.outline = res.outline; debug.last.rectSize = [rect.w, rect.h]; debug.rectMat = rect.mat; debug.seg = seg;
       stepReview();
     }
     function runSeg() { if (res && res.mask) res.mask.delete(); res = segment(cv, seg, tol, edits, pick); debug.last && (debug.last.outline = res.outline); }
@@ -103,17 +106,18 @@ export function openCapture(root, { depth = 20, title = 'Add object' } = {}) {
         <div class="canvaswrap"><canvas id="rCv"></canvas></div>
         <div class="note" id="rInfo"></div>
         <div class="row"><label>Tolerance</label><input id="rTol" type="range" min="4" max="80" step="1"><div class="num"><input id="rTolN" type="number" min="4" max="80" step="1"></div></div>
+        <div class="row"><label>Remove shadow</label><input id="rSh" type="range" min="0" max="100" step="1"><div class="num"><input id="rShN" type="number" min="0" max="100" step="1"></div></div>
         <div class="actions" id="rModes"><button data-m="pick">Select</button><button data-m="add">Add area</button><button data-m="remove">Remove area</button><button id="rAuto">Auto</button></div>
-        <p class="note">Select: tap the object. Add or Remove: tap a region of similar colour to include or drop it. Raise tolerance if the outline is too small, lower it if it grabs the sheet.</p>
+        <p class="note">Select: tap the object. Add or Remove: tap a region of similar colour to include or drop it. Raise tolerance if the outline is too small, lower it if it grabs the sheet. Raise Remove shadow if the outline includes a shadow; lower it if a dark object is cut off.</p>
         <div class="actions"><button id="rRetake">Retake</button><button id="rUse" class="on" style="background:var(--tx);color:var(--bg)">Use outline</button></div></div>`;
       bindX(); const c = root.querySelector('#rCv'); c.width = rect.w; c.height = rect.h;
-      const tolR = root.querySelector('#rTol'), tolN = root.querySelector('#rTolN');
+      const tolR = root.querySelector('#rTol'), tolN = root.querySelector('#rTolN'), shR = root.querySelector('#rSh'), shN = root.querySelector('#rShN');
       const paint = () => {
         const ctx = c.getContext('2d'); const id = new ImageData(new Uint8ClampedArray(rect.mat.data), rect.w, rect.h);
         if (res.ok && res.mask) { const m = res.mask.data, d = id.data; for (let i = 0; i < m.length; i++) if (!m[i]) { d[4 * i] *= 0.45; d[4 * i + 1] *= 0.45; d[4 * i + 2] *= 0.45; } }
         ctx.putImageData(id, 0, 0);
         if (res.ok) { ctx.beginPath(); res.outline.forEach(([x, y], i) => { const px = (x - rect.x0) * rect.s, py = (y - rect.y0) * rect.s; i ? ctx.lineTo(px, py) : ctx.moveTo(px, py); }); ctx.closePath(); ctx.lineWidth = Math.max(2, rect.s * 0.5); ctx.strokeStyle = '#7db4ff'; ctx.stroke(); }
-        tolR.value = tolN.value = tol;
+        tolR.value = tolN.value = tol; shR.value = shN.value = shadow;
         root.querySelector('#rInfo').textContent = res.ok ? `${res.bbox.w.toFixed(1)} x ${res.bbox.h.toFixed(1)} mm, ${res.areaMM2.toFixed(0)} mm\u00b2 (before margin)` : 'No object found. Try a different tolerance.';
         root.querySelector('#rUse').disabled = !res.ok;
         root.querySelector('#rWarn').innerHTML = warnings().map((t) => `<div class="warn" style="margin-bottom:6px">${t}</div>`).join('');
@@ -121,7 +125,9 @@ export function openCapture(root, { depth = 20, title = 'Add object' } = {}) {
       };
       let timer = 0; const rerun = (fast) => { clearTimeout(timer); timer = setTimeout(() => { runSeg(); paint(); }, fast ? 0 : 60); };
       tolR.oninput = () => { tol = +tolR.value; tolN.value = tol; rerun(); }; tolN.onchange = () => { tol = Math.max(4, Math.min(80, +tolN.value || tol)); rerun(true); };
-      root.querySelector('#rAuto').onclick = () => { tol = Math.round(seg.autoTol); edits = []; pick = null; rerun(true); };
+      const setShadow = (v, auto) => { shadow = Math.max(0, Math.min(100, Math.round(v))); computeDist(seg, shadow); if (auto) tol = Math.round(seg.autoTol); rerun(true); };
+      shR.oninput = () => { shN.value = shR.value; shadow = +shR.value; computeDist(seg, shadow); rerun(); }; shN.onchange = () => setShadow(+shN.value || 0, false);
+      root.querySelector('#rAuto').onclick = () => { if (shadow !== SHADOW_DEFAULT) { shadow = SHADOW_DEFAULT; computeDist(seg, shadow); } tol = Math.round(seg.autoTol); edits = []; pick = null; rerun(true); };
       root.querySelectorAll('#rModes [data-m]').forEach((b) => b.onclick = () => { mode = b.dataset.m; paint(); });
       c.addEventListener('pointerdown', (e) => { const b = c.getBoundingClientRect(), x = (e.clientX - b.left) / b.width * rect.w, y = (e.clientY - b.top) / b.height * rect.h;
         if (mode === 'pick') pick = { x, y }; else edits.push({ type: mode, x, y }); runSeg(); paint(); });

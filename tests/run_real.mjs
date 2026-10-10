@@ -1,0 +1,12 @@
+import { chromium } from 'playwright';
+const browser = await chromium.launch(); const page = await (await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, hasTouch: true, isMobile: true, colorScheme: 'dark' })).newPage();
+await page.goto('http://localhost:8123/'); await page.waitForFunction(() => window.__gfReady);
+await page.click('#btnAdd'); await page.setInputFiles('#fLib', 'tests/real/battery.jpg'); await page.waitForSelector('#mCv', { timeout: 60000 });
+await page.screenshot({ path: 'screenshots/07-manual-calibration.png' });
+const info = await page.evaluate(() => window.__gfDebug.last.photo); const box = await page.locator('#mCv').boundingBox();
+for (const [x, y] of [[30, 880], [1110, 880], [1110, 1005], [30, 1005]]) await page.mouse.click(box.x + x / info.w * box.width, box.y + y / info.h * box.height);
+await page.fill("#mW", "98"); await page.click('#mGo'); await page.waitForSelector('#rCv', { timeout: 60000 });
+await page.fill('#rTolN', '30'); await page.locator('#rTolN').dispatchEvent('change'); await page.waitForTimeout(300); const c = page.locator('#rCv'); const b = await c.boundingBox(); await page.mouse.click(b.x + b.width * 0.5, b.y + b.height * 0.5);
+await page.waitForTimeout(300); await page.screenshot({ path: 'screenshots/08-real-photo-review.png' });
+console.log(JSON.stringify(await page.evaluate(() => { const d = window.__gfDebug.last; return { tol: d.tol, n: d.outline && d.outline.length, rect: d.rectSize }; })));
+await browser.close();

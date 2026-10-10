@@ -1,0 +1,10 @@
+import { chromium } from 'playwright';
+import fs from 'fs';
+const [,, img, out] = process.argv;
+const browser = await chromium.launch();
+const page = await (await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true, acceptDownloads: true })).newPage();
+await page.goto('http://localhost:8123/'); await page.evaluate(() => localStorage.clear()); await page.reload(); await page.waitForFunction(() => window.__gfReady);
+await page.click('#btnAdd'); await page.setInputFiles('#fLib', img); await page.waitForSelector('#rCv', { timeout: 60000 }); await page.click('#rUse'); await page.waitForTimeout(300);
+const [dl] = await Promise.all([page.waitForEvent('download'), page.evaluate(() => window.__gf.exportAll('stl'))]); await dl.saveAs(out);
+console.log(JSON.stringify(await page.evaluate(() => { const a = window.__gf.analyze(); return { nx: a.nx, ny: a.ny, H: a.H, depth: a.objects[0].eff.depth }; })));
+await browser.close();

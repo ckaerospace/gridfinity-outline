@@ -1,0 +1,18 @@
+{
+  "name": "gridfinity-outline",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@techstark/opencv-js": "^5.0.0-release.1",
+    "manifold-3d": "^3.5.4",
+    "playwright": "^1.64.0",
+    "three": "^0.186.1"
+  }
+}

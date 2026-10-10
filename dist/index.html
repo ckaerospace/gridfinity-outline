@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<meta name="theme-color" content="#0e0f11">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="stylesheet" href="style.css">
+<title>Outline</title>
+<script type="importmap">{"imports":{"three":"./vendor/three.module.js"}}</script>
+</head>
+<body>
+<div id="app">
+  <header class="top">
+    <div class="brand">Outline</div>
+    <div id="summary" class="summary"></div>
+    <button id="btnBin" class="ghost" aria-label="Bin settings">Bin</button>
+  </header>
+
+  <div class="seg" id="viewSeg" role="tablist">
+    <button data-view="plan" class="on">Plan</button>
+    <button data-view="3d">3D</button>
+  </div>
+
+  <section id="stage" class="stage">
+    <svg id="plan" xmlns="http://www.w3.org/2000/svg"></svg>
+    <div id="view3d" class="view3d" hidden><div id="labels3d"></div></div>
+    <div id="empty" class="empty" hidden>
+      <p class="big">No objects yet</p>
+      <p class="muted">Photograph an object lying on the printed sheet.</p>
+      <a class="link" href="sheet.html">Print the calibration sheet</a>
+    </div>
+    <div id="notchHint" class="hint" hidden>Tap the pocket edge to place a notch</div>
+  </section>
+
+  <section class="panel" id="panel">
+    <div class="chips" id="chips"></div>
+    <div id="objPanel"></div>
+  </section>
+
+  <footer class="bar">
+    <button id="btnAdd" class="primary">Add object</button>
+    <button id="btnExport" class="secondary">Export</button>
+  </footer>
+</div>
+
+<div id="capture" class="overlay" hidden></div>
+<div id="sheetDlg" class="sheetdlg" hidden></div>
+<div id="toast" class="toast" hidden></div>
+<script type="module" src="js/app.js"></script>
+</body>
+</html>

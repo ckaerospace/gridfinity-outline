@@ -7,7 +7,7 @@ export const debug = { last: null };
 
 export function openCapture(root, { depth = 20, title = 'Add object' } = {}) {
   return new Promise((resolve) => {
-    let cv = null, photo = null, cal = null, rect = null, seg = null, res = null, edits = [], pick = null, tol = 24, shadow = 85, mode = 'pick', closed = false, objH = 0, cam = null, smoothV = SMOOTH_DEFAULT;
+    let cv = null, photo = null, cal = null, rect = null, seg = null, res = null, edits = [], pick = null, tol = 24, shadow = 85, mode = 'pick', closed = false, objH = 0, cam = null, smoothV = SMOOTH_DEFAULT, smartSess = null, smartPts = [], smartBusy = false;
     const done = (v) => { if (closed) return; closed = true; if (rect) rect.mat.delete(); root.hidden = true; root.innerHTML = ''; resolve(v); };
     root.hidden = false;
     const head = (t) => `<div class="ov-head"><h2>${t}</h2><button class="ghost" data-x>Cancel</button></div>`;
@@ -47,7 +47,7 @@ export function openCapture(root, { depth = 20, title = 'Add object' } = {}) {
     async function finish(T, t0) {
       busy('Tracing outline'); await new Promise((r) => setTimeout(r, 20));
       const t2 = performance.now(); if (rect) rect.mat.delete();
-      try { cam = cameraFromH(cal.Hmm2img, photo.w, photo.h); } catch (e) { cam = null; } objH = 0;
+      try { cam = cameraFromH(cal.Hmm2img, photo.w, photo.h); } catch (e) { cam = null; } objH = 0; smartSess = null; smartPts = [];
       rect = rectify(cv, photo.imageData, cal); T.rectify = performance.now() - t2;
       const t3 = performance.now(); shadow = SHADOW_DEFAULT; seg = prepareSeg(cv, rect, shadow); T.prep = performance.now() - t3;
       tol = Math.round(seg.autoTol); edits = []; pick = null; mode = 'pick';
@@ -124,8 +124,8 @@ export function openCapture(root, { depth = 20, title = 'Add object' } = {}) {
         <div class="row"><label>Smoothing</label><input id="rSm" type="range" min="0" max="100" step="1"><div class="num"><input id="rSmN" type="number" min="0" max="100" step="1"></div></div>
         <div class="row"><label>Object height (mm)</label><input id="rH" type="range" min="0" max="80" step="0.5"><div class="num"><input id="rHN" type="number" min="0" max="80" step="0.5"></div></div>
         <p class="note" id="rHNote"></p>
-        <div class="actions" id="rModes"><button data-m="pick">Select</button><button data-m="add">Add area</button><button data-m="remove">Remove area</button><button id="rAuto">Auto</button></div>
-        <p class="note">Select: tap the object. Add or Remove: tap a region of similar colour to include or drop it. Raise tolerance if the outline is too small, lower it if it grabs the sheet. Raise Remove shadow if the outline includes a shadow; lower it if a dark object is cut off.</p>
+        <div class="actions" id="rModes"><button data-m="pick">Select</button><button data-m="add">Add area</button><button data-m="remove">Remove area</button><button data-m="smart">Smart select</button><button data-m="smartneg">Smart: exclude</button><button id="rAuto">Auto</button></div>
+        <p class="note">Select: tap the object. Add or Remove: tap a region of similar colour to include or drop it. Smart select (optional AI model, about 45 MB download the first time, runs on this device): tap the object, then use Smart: exclude and tap anything wrongly included, such as a shadow. Auto goes back to the classic method. Raise tolerance if the outline is too small, lower it if it grabs the sheet. Raise Remove shadow if the outline includes a shadow; lower it if a dark object is cut off.</p>
         <div class="actions"><button id="rRetake">Retake</button><button id="rUse" class="on" style="background:var(--tx);color:var(--bg)">Use outline</button></div></div>`;
       bindX(); const c = root.querySelector('#rCv'); c.width = rect.w; c.height = rect.h;
       const tolR = root.querySelector('#rTol'), tolN = root.querySelector('#rTolN'), shR = root.querySelector('#rSh'), shN = root.querySelector('#rShN'), smR = root.querySelector('#rSm'), smN = root.querySelector('#rSmN'), hR = root.querySelector('#rH'), hN = root.querySelector('#rHN');
@@ -148,10 +148,20 @@ export function openCapture(root, { depth = 20, title = 'Add object' } = {}) {
       shR.oninput = () => { shN.value = shR.value; shadow = +shR.value; computeDist(seg, shadow); rerun(); }; shN.onchange = () => setShadow(+shN.value || 0, false);
       smR.oninput = () => { smoothV = +smR.value; smN.value = smoothV; rerun(); }; smN.onchange = () => { smoothV = Math.max(0, Math.min(100, Math.round(+smN.value || 0))); rerun(true); };
       hR.oninput = () => { objH = +hR.value; hN.value = objH; paint(); }; hN.onchange = () => { objH = Math.max(0, Math.min(80, +hN.value || 0)); paint(); };
-      root.querySelector('#rAuto').onclick = () => { if (shadow !== SHADOW_DEFAULT) { shadow = SHADOW_DEFAULT; computeDist(seg, shadow); } tol = Math.round(seg.autoTol); edits = []; pick = null; rerun(true); };
+      root.querySelector('#rAuto').onclick = () => { if (shadow !== SHADOW_DEFAULT) { shadow = SHADOW_DEFAULT; computeDist(seg, shadow); } tol = Math.round(seg.autoTol); edits = []; pick = null; smartPts = []; seg.smart = null; rerun(true); };
       root.querySelectorAll('#rModes [data-m]').forEach((b) => b.onclick = () => { mode = b.dataset.m; paint(); });
       c.addEventListener('pointerdown', (e) => { const b = c.getBoundingClientRect(), x = (e.clientX - b.left) / b.width * rect.w, y = (e.clientY - b.top) / b.height * rect.h;
+        if (mode === 'smart' || mode === 'smartneg') { doSmart(x, y, mode === 'smart' ? 1 : 0); return; }
         if (mode === 'pick') pick = { x, y }; else edits.push({ type: mode, x, y }); runSeg(); paint(); });
+      async function doSmart(x, y, label) {
+        if (smartBusy) return; smartBusy = true; const info = root.querySelector('#rInfo');
+        try {
+          if (!smartSess) { const cvs = document.createElement('canvas'); cvs.width = rect.w; cvs.height = rect.h; cvs.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(rect.mat.data), rect.w, rect.h), 0, 0);
+            const { smartPrepare } = await import('./smart.js'); smartSess = await smartPrepare(cvs, (t) => { info.textContent = t + '...'; }); debug.smartEncMs = smartSess.tEnc; }
+          smartPts.push({ x, y, label }); info.textContent = 'Smart select...'; seg.smart = await smartSess.decode(smartPts); debug.smartDecMs = smartSess.tDec; debug.smartIou = smartSess.iou; runSeg(); paint();
+        } catch (e) { console.error(e); smartPts.pop(); info.textContent = 'Smart select is not available here: ' + (e.message || e); debug.smartErr = String(e.message || e); }
+        smartBusy = false;
+      }
       root.querySelector('#rRetake').onclick = () => stepPick();
       root.querySelector('#rUse').onclick = () => {
         const outl = objH > 0 && cam ? corrOutline() : res.outline, bb = bbox(outl), cx = (bb.x0 + bb.x1) / 2, cy = (bb.y0 + bb.y1) / 2;

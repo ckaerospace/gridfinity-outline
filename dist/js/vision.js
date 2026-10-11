@@ -210,7 +210,7 @@ function flood(seg, sx, sy, tol) { // pixels connected to seed with Lab distance
 export const SMOOTH_DEFAULT = 40;
 export function segment(cv, seg, tol, edits = [], pick = null, smoothS = SMOOTH_DEFAULT) {
   const { w, h, s, x0, y0, dist } = seg, n = w * h, m = new cv.Mat(h, w, cv.CV_8U), d = m.data, inset = Math.round(1.5 * s);
-  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) d[y * w + x] = (dist[y * w + x] > tol && x >= 0 && y >= 0) ? 255 : 0;
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) d[y * w + x] = (seg.smart ? seg.smart[y * w + x] : (dist[y * w + x] > tol)) ? 255 : 0;
   const k3 = cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(3, 3)), k5 = cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(5, 5));
   cv.morphologyEx(m, m, cv.MORPH_OPEN, k3); cv.morphologyEx(m, m, cv.MORPH_CLOSE, k5); k3.delete(); k5.delete();
   for (const e of edits) { const fl = flood(seg, Math.round(e.x), Math.round(e.y), Math.max(10, tol)); for (let i = 0; i < n; i++) if (fl[i]) d[i] = e.type === 'add' ? 255 : 0; }

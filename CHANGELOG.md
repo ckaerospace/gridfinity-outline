@@ -23,3 +23,12 @@ Regression sets: standard 15 synthetic cases on the tinted sheet 0.969 (old code
 - Dimensions shown in the review screen, the plan view and the object panel (object and pocket, minimum rectangle).
 - Contour smoothing slider (0-100, default 40; Gaussian along the outline, corners pinned): synthetic mean IoU 0.9641 -> 0.9629 (standard set) and 0.979 -> 0.979 (hard set), real photos' total turning roughly halved.
 - Exposure normalisation (1-99 percentile stretch) before marker detection; capture tips added.
+
+# Round 4: Smart select (MobileSAM), real photos, one tap each (tests/run_smart.mjs)
+| photo | classic min-rect | smart min-rect | IoU classic vs smart |
+|---|---|---|---|
+| floss box (true 52.5 x 43) | 53.1 x 44.8 | 52.7 x 43.2 | 0.962 |
+| white part, close | 85.1 x 41.6 | 83.5 x 42.4 (a thin shadow strip on the left is included) | 0.911 |
+| white part, far, shaded | 80.5 x 39.7 | 83.3 x 39.8 | 0.921 |
+Smart outlines are visibly smoother and, on the far white part, hug the part where the classic trace has bumps. First tap on a recessed panel of the close white part with the single-mask decoder picked only the panel (26.8 x 7.2 mm); the multi-mask rule above fixes this on these photos, other objects are untested.
+Also: exposure normalisation before marker detection (a darkened low-contrast floss photo now calibrates and measures 52.9 x 44.5; a darkened far white part still fails to segment: limit).

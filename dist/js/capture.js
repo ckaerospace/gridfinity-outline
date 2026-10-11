@@ -117,7 +117,8 @@ export function openCapture(root, { depth = 20, title = 'Add object' } = {}) {
       const u = res.ok ? res : null;
       root.innerHTML = head('Check outline') + `<div class="ov-body">
         <div id="rWarn"></div>
-        <div class="canvaswrap"><canvas id="rCv"></canvas></div>
+        <div class="canvaswrap" id="rWrap"><canvas id="rCv"></canvas><div class="zoomctl"><button id="zIn" aria-label="Zoom in">+</button><button id="zOut" aria-label="Zoom out">−</button><button id="zFit">Fit</button><span id="zLbl">1x</span></div></div>
+        <div class="note" id="rZoomHint">Zoom: pinch or two-finger drag, double-tap, mouse wheel, or the + / − buttons. When zoomed, drag with one finger to move the image; a short tap selects.</div>
         <div class="note" id="rInfo"></div>
         <div class="row"><label>Tolerance</label><input id="rTol" type="range" min="4" max="80" step="1"><div class="num"><input id="rTolN" type="number" min="4" max="80" step="1"></div></div>
         <div class="row"><label>Remove shadow</label><input id="rSh" type="range" min="0" max="100" step="1"><div class="num"><input id="rShN" type="number" min="0" max="100" step="1"></div></div>
@@ -125,17 +126,39 @@ export function openCapture(root, { depth = 20, title = 'Add object' } = {}) {
         <div class="row"><label>Object height (mm)</label><input id="rH" type="range" min="0" max="80" step="0.5"><div class="num"><input id="rHN" type="number" min="0" max="80" step="0.5"></div></div>
         <p class="note" id="rHNote"></p>
         <div class="actions" id="rModes"><button data-m="pick">Select</button><button data-m="add">Add area</button><button data-m="remove">Remove area</button><button data-m="smart">Smart select</button><button data-m="smartneg">Smart: exclude</button><button id="rAuto">Auto</button></div>
-        <p class="note">Select: tap the object. Add or Remove: tap a region of similar colour to include or drop it. Smart select (optional AI model, about 45 MB download the first time, runs on this device): tap the object, then use Smart: exclude and tap anything wrongly included, such as a shadow. Auto goes back to the classic method. Raise tolerance if the outline is too small, lower it if it grabs the sheet. Raise Remove shadow if the outline includes a shadow; lower it if a dark object is cut off.</p>
+        <p class="note">Select: tap the object (zoom in first for small parts). Add or Remove: tap a region of similar colour to include or drop it. Smart select (optional AI model, about 45 MB download the first time, runs on this device): tap the object, then use Smart: exclude and tap anything wrongly included, such as a shadow. Auto goes back to the classic method. Raise tolerance if the outline is too small, lower it if it grabs the sheet. Raise Remove shadow if the outline includes a shadow; lower it if a dark object is cut off.</p>
         <div class="actions"><button id="rRetake">Retake</button><button id="rUse" class="on" style="background:var(--tx);color:var(--bg)">Use outline</button></div></div>`;
-      bindX(); const c = root.querySelector('#rCv'); c.width = rect.w; c.height = rect.h;
+      bindX(); const c = root.querySelector('#rCv'); const wrap = root.querySelector('#rWrap');
+      c.style.aspectRatio = rect.w + ' / ' + rect.h;
+      // ---- zoom / pan view: screen(css px) = img(px) * k * z + t ; canvas backing store is CSS size x devicePixelRatio, drawn from the full straightened image ----
+      const V = { z: 1, tx: 0, ty: 0 }, MAXZ = 8; let base = document.createElement('canvas'); base.width = rect.w; base.height = rect.h;
+      const kf = () => (c.clientWidth || 360) / rect.w;
+      const clampV = () => { const k = kf(), W = rect.w * k, H = rect.h * k; V.z = Math.max(1, Math.min(MAXZ, V.z)); V.tx = Math.min(0, Math.max(W - W * V.z, V.tx)); V.ty = Math.min(0, Math.max(H - H * V.z, V.ty)); };
+      const zoomAt = (cx, cy, nz) => { const o = V.z; nz = Math.max(1, Math.min(MAXZ, nz)); const r = nz / o; V.tx = cx - (cx - V.tx) * r; V.ty = cy - (cy - V.ty) * r; V.z = nz; clampV(); draw(); };
+      const toImg = (clientX, clientY) => { const b = c.getBoundingClientRect(), k = b.width / rect.w; return [(clientX - b.left - V.tx) / (k * V.z), (clientY - b.top - V.ty) / (k * V.z)]; };
+      const tracePath = (ctx, o, k) => { ctx.beginPath(); o.forEach(([x, y], i) => { const px = ((x - rect.x0) * rect.s) * k * V.z + V.tx, py = ((y - rect.y0) * rect.s) * k * V.z + V.ty; i ? ctx.lineTo(px, py) : ctx.moveTo(px, py); }); ctx.closePath(); };
+      const draw = () => {
+        const dpr = window.devicePixelRatio || 1, cw = c.clientWidth || 360, ch = cw * rect.h / rect.w, k = cw / rect.w; clampV();
+        const bw = Math.round(cw * dpr), bh = Math.round(ch * dpr); if (c.width !== bw || c.height !== bh) { c.width = bw; c.height = bh; }
+        const ctx = c.getContext('2d'); ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.clearRect(0, 0, bw, bh); ctx.imageSmoothingEnabled = k * V.z * dpr < 2; ctx.imageSmoothingQuality = 'high';
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.drawImage(base, V.tx, V.ty, rect.w * k * V.z, rect.h * k * V.z);
+        if (res.ok) { tracePath(ctx, res.outline, k); ctx.lineWidth = 2; ctx.lineJoin = 'round'; ctx.strokeStyle = '#7db4ff'; ctx.stroke(); }
+        if (res.ok && objH > 0 && cam) { tracePath(ctx, corrOutline(), k); ctx.setLineDash([6, 4]); ctx.lineWidth = 2; ctx.strokeStyle = '#ffb347'; ctx.stroke(); ctx.setLineDash([]); }
+        const l = root.querySelector('#zLbl'); if (l) l.textContent = (Math.round(V.z * 10) / 10) + 'x';
+        debug.view = { z: V.z, tx: V.tx, ty: V.ty, k };
+      };
+      window.__gfZoom = { V, toImg, zoomAt, draw, rectW: () => rect.w, rectH: () => rect.h, lastTap: null };
+      root.querySelector('#zIn').onclick = () => zoomAt(c.clientWidth / 2, c.clientHeight / 2, V.z * 1.6);
+      root.querySelector('#zOut').onclick = () => zoomAt(c.clientWidth / 2, c.clientHeight / 2, V.z / 1.6);
+      root.querySelector('#zFit').onclick = () => { V.z = 1; V.tx = V.ty = 0; draw(); };
+      new ResizeObserver(() => draw()).observe(wrap);
       const tolR = root.querySelector('#rTol'), tolN = root.querySelector('#rTolN'), shR = root.querySelector('#rSh'), shN = root.querySelector('#rShN'), smR = root.querySelector('#rSm'), smN = root.querySelector('#rSmN'), hR = root.querySelector('#rH'), hN = root.querySelector('#rHN');
       const paint = () => {
-        const ctx = c.getContext('2d'); const id = new ImageData(new Uint8ClampedArray(rect.mat.data), rect.w, rect.h);
+        const id = new ImageData(new Uint8ClampedArray(rect.mat.data), rect.w, rect.h);
         if (res.ok && res.mask) { const m = res.mask.data, d = id.data; for (let i = 0; i < m.length; i++) if (!m[i]) { d[4 * i] *= 0.45; d[4 * i + 1] *= 0.45; d[4 * i + 2] *= 0.45; } }
-        ctx.putImageData(id, 0, 0);
-        if (res.ok) { ctx.beginPath(); res.outline.forEach(([x, y], i) => { const px = (x - rect.x0) * rect.s, py = (y - rect.y0) * rect.s; i ? ctx.lineTo(px, py) : ctx.moveTo(px, py); }); ctx.closePath(); ctx.lineWidth = Math.max(2, rect.s * 0.5); ctx.strokeStyle = '#7db4ff'; ctx.stroke(); }
+        base.getContext('2d').putImageData(id, 0, 0);
         tolR.value = tolN.value = tol; shR.value = shN.value = shadow;
-        if (res.ok && objH > 0 && cam) { const co = corrOutline(); ctx.beginPath(); co.forEach(([x, y], i) => { const px = (x - rect.x0) * rect.s, py = (y - rect.y0) * rect.s; i ? ctx.lineTo(px, py) : ctx.moveTo(px, py); }); ctx.closePath(); ctx.setLineDash([rect.s * 2, rect.s * 1.2]); ctx.strokeStyle = '#ffb347'; ctx.stroke(); ctx.setLineDash([]); }
+        draw();
         debug.last && (debug.last.outlineCorr = res.ok ? (objH > 0 && cam ? corrOutline() : res.outline) : null); smR.value = smN.value = smoothV; hR.value = hN.value = objH; root.querySelector('#rHNote').textContent = heightNote();
         root.querySelector('#rInfo').textContent = res.ok ? sizeText() : 'No object found. Try a different tolerance.';
         root.querySelector('#rUse').disabled = !res.ok;
@@ -150,9 +173,28 @@ export function openCapture(root, { depth = 20, title = 'Add object' } = {}) {
       hR.oninput = () => { objH = +hR.value; hN.value = objH; paint(); }; hN.onchange = () => { objH = Math.max(0, Math.min(80, +hN.value || 0)); paint(); };
       root.querySelector('#rAuto').onclick = () => { if (shadow !== SHADOW_DEFAULT) { shadow = SHADOW_DEFAULT; computeDist(seg, shadow); } tol = Math.round(seg.autoTol); edits = []; pick = null; smartPts = []; seg.smart = null; rerun(true); };
       root.querySelectorAll('#rModes [data-m]').forEach((b) => b.onclick = () => { mode = b.dataset.m; paint(); });
-      c.addEventListener('pointerdown', (e) => { const b = c.getBoundingClientRect(), x = (e.clientX - b.left) / b.width * rect.w, y = (e.clientY - b.top) / b.height * rect.h;
+      const act = (x, y) => { window.__gfZoom.lastTap = [x, y];
         if (mode === 'smart' || mode === 'smartneg') { doSmart(x, y, mode === 'smart' ? 1 : 0); return; }
-        if (mode === 'pick') pick = { x, y }; else edits.push({ type: mode, x, y }); runSeg(); paint(); });
+        if (mode === 'pick') pick = { x, y }; else edits.push({ type: mode, x, y }); runSeg(); paint(); };
+      // gestures: taps (small movement, short) select; 1-pointer drag pans when zoomed; 2 pointers pinch + pan; wheel zooms; double tap toggles zoom
+      const P = new Map(); let g = null, tapTimer = 0, lastTapAt = 0, lastTapXY = null;
+      const cl = (e) => { const b = c.getBoundingClientRect(); return [e.clientX - b.left, e.clientY - b.top]; };
+      c.addEventListener('pointerdown', (e) => { c.setPointerCapture(e.pointerId); P.set(e.pointerId, { ...Object.fromEntries([['x', cl(e)[0]], ['y', cl(e)[1]]]), t0: performance.now(), x0: cl(e)[0], y0: cl(e)[1], cx: e.clientX, cy: e.clientY, mouse: e.pointerType === 'mouse', moved: false });
+        if (P.size === 2) { const [a, b] = [...P.values()]; g = { d: Math.hypot(a.x - b.x, a.y - b.y) || 1, z: V.z, mx: (a.x + b.x) / 2, my: (a.y + b.y) / 2, multi: true }; P.forEach((p) => (p.moved = true)); clearTimeout(tapTimer); } });
+      c.addEventListener('pointermove', (e) => { const p = P.get(e.pointerId); if (!p) return; const [x, y] = cl(e), dx = x - p.x, dy = y - p.y; p.x = x; p.y = y;
+        if (P.size >= 2 && g) { const [a, b] = [...P.values()]; const d = Math.hypot(a.x - b.x, a.y - b.y) || 1, mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+          V.tx += mx - g.mx; V.ty += my - g.my; g.mx = mx; g.my = my; zoomAt(mx, my, g.z * d / g.d); return; }
+        if (!p.moved && Math.hypot(x - p.x0, y - p.y0) > (p.mouse ? 4 : 8)) p.moved = true;
+        if (p.moved && V.z > 1) { V.tx += dx; V.ty += dy; draw(); } });
+      const up = (e) => { const p = P.get(e.pointerId); if (!p) return; P.delete(e.pointerId); if (P.size < 2) g = null;
+        if (e.type === 'pointercancel' || p.moved || performance.now() - p.t0 > 600) return;
+        const [x, y] = cl(e), now = performance.now();
+        if (!p.mouse && lastTapXY && now - lastTapAt < 320 && Math.hypot(x - lastTapXY[0], y - lastTapXY[1]) < 30) { clearTimeout(tapTimer); lastTapAt = 0; lastTapXY = null; if (V.z > 1.05) { V.z = 1; V.tx = V.ty = 0; draw(); } else zoomAt(x, y, 3); return; }
+        const [ix, iy] = toImg(e.clientX, e.clientY);
+        if (p.mouse) { act(ix, iy); return; }
+        lastTapAt = now; lastTapXY = [x, y]; clearTimeout(tapTimer); tapTimer = setTimeout(() => { lastTapXY = null; act(ix, iy); }, 260); };
+      c.addEventListener('pointerup', up); c.addEventListener('pointercancel', up);
+      c.addEventListener('wheel', (e) => { e.preventDefault(); const [x, y] = cl(e); zoomAt(x, y, V.z * Math.exp(-e.deltaY * 0.0018)); }, { passive: false });
       async function doSmart(x, y, label) {
         if (smartBusy) return; smartBusy = true; const info = root.querySelector('#rInfo');
         try {

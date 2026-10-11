@@ -12,7 +12,7 @@ Service workers need HTTPS or localhost. After the first load the whole app (Ope
 ## Workflow
 1. Print `dist/sheet.pdf` (or open `sheet.html`) at 100% on A4. Check the 100 mm scale bar.
 2. Add object: Take photo / Photo library. Photo is downscaled to 2000 px long side in the browser.
-3. Review: tolerance slider + number, Select / Add area / Remove area taps, Auto. Warnings for steep angle, tall objects, loose calibration, object touching the area edge.
+3. Review: **zoom up to 8x** (pinch, two-finger drag to pan, double-tap, mouse wheel, + / - / Fit buttons; when zoomed a one-finger drag pans, a short tap selects), tolerance slider + number, Select / Add area / Remove area taps, Auto. Warnings for steep angle, tall objects, loose calibration, object touching the area edge.
 4. Plan view: drag pockets, rotate with the handle (or slider / Rotate 90), add a notch (Add notch, then tap the pocket edge; drag the dot to move). Overlaps are auto-nudged; red means overlap or outside the bin.
 5. Per object sliders (each with a typeable number): depth (default 20 mm), margin (default 2 mm), notch size (default 16 mm), rotation. Defaults live under Bin. An object value overrides the default until you press Reset.
 6. 3D tab: orbitable view of the exact mesh that is exported, each pocket labelled with its depth.

@@ -1,3 +1,6 @@
+# Review-screen zoom (sw cache v5)
+Pinch / two-finger pan / double-tap / wheel / +,-,Fit up to 8x on the select screen. The canvas backing store is CSS size x devicePixelRatio and is redrawn from the full straightened image; the outline is drawn as vector lines so it stays crisp. Taps are accepted on release (short, little movement) and mapped through the inverse view transform; a drag pans instead of selecting. Touch taps wait 260 ms to tell them apart from a double-tap. Test: `node tests/zoom_test.mjs`.
+
 # What the test loop found and fixed
 1. STL not watertight: hull-built feet produced sliver triangles that collapsed under float32 rounding. Fixed: lofted rings for the foot, vertex coordinates snapped to float32-exact values, welded export. Now watertight, winding consistent, zero degenerate faces.
 2. Notch sphere tangent to the pocket floor created degenerate geometry: sphere now sits 0.2 mm lower.

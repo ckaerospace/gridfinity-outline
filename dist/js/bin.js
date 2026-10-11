@@ -6,6 +6,7 @@ export const GF = { pitch: 42, hUnit: 7, clearance: 0.5, topR: 3.75, foot: { cha
 GF.minFloorAboveFoot = 0.8; // min material between foot-groove top (z=4.75) and pocket floor
 GF.footH = GF.foot.chamfer1 + GF.foot.vert + GF.foot.chamfer2; // 4.75
 let M = null;
+export const getM = () => M;
 export async function initManifold() { if (M) return M; const w = await Module(); w.setup(); M = w; return M; }
 
 const sn = (v) => Math.fround(Math.round(v * 1e5) / 1e5);
@@ -70,7 +71,7 @@ export function analyze(project) {
   return { nx, ny, W, D, hu, H, maxDepth, objects: res, _items: items };
 }
 
-export function buildBin(project, an) {
+export function buildBin(project, an, info) {
   an = an || analyze(project);
   const { W, D, H } = an, feet = [];
   for (let i = 0; i < an.nx; i++) for (let j = 0; j < an.ny; j++) feet.push(footSolid(GF.pitch * i + GF.pitch / 2 - GF.clearance / 2, GF.pitch * j + GF.pitch / 2 - GF.clearance / 2));
@@ -94,7 +95,52 @@ export function buildBin(project, an) {
     }
   });
   if (cuts.length) bin = bin.subtract(M.Manifold.union(cuts));
+  const sv = project.save;
+  if (sv && sv.on && an.objects.length) { // optional 'Save material': sealed hexagonal voids in the webs (see saveParams / hollowVoids)
+    const vd = hollowVoids(project, an), solidV = info ? bin.volume() : 0;
+    if (vd) { const red = bin.subtract(vd); bin.delete && bin.delete(); bin = red; vd.delete && vd.delete(); }
+    if (info) { info.solidVol = solidV; info.redVol = bin.volume(); info.pct = solidV > 0 ? 100 * (1 - info.redVol / solidV) : 0; info.params = saveParams(project); }
+  }
   return bin;
+}
+
+// ---- optional: Save material (sealed hexagonal voids). Off by default; with it off nothing here runs. ----
+// Voids start above the foot (z = footH + wall) so the Gridfinity base profile and baseplate fit are untouched, end `wall` below the top surface (closed, clean top) and
+// below each pocket floor, keep `wall` (>= 1.2 mm) to the outer walls, pockets and notches, and a rib (>= wall) between voids. Hexagons have vertical walls (no overhang)
+// and a flat roof whose span is at most about 14 mm (bridging). The voids are sealed (closed cavities inside the print).
+export function saveParams(project) {
+  const sv = project.save || {}, wall = Math.max(1.2, sv.wall ?? 1.6), t = Math.max(0, Math.min(100, sv.saving ?? 60)) / 100;
+  return { wall, rib: Math.max(wall, 2.4 - 1.2 * t), flat: 7 + 5.5 * t, z0: GF.footH + wall, minH: 2 };
+}
+function hexGrid(W, D, flat, rib) {
+  const R = flat / Math.sqrt(3), p = flat + rib, dx = 1.5 * p / Math.sqrt(3), polys = [];
+  for (let c = -1; c * dx < W + p; c++) for (let y = ((c & 1) ? -p / 2 : 0) - p, x = c * dx; y < D + p; y += p) polys.push(Array.from({ length: 6 }, (_, k) => [x + R * Math.cos(k * Math.PI / 3), y + R * Math.sin(k * Math.PI / 3)]));
+  return M.CrossSection.ofPolygons(polys, 'Positive');
+}
+function pieces(region, grid, r) { // region ∩ hex grid, rounded (opening by 0.8 mm removes slivers), tiny pieces dropped
+  let x = grid.intersect(region).offset(-0.8, 'Round', 2, 12).offset(0.8, 'Round', 2, 12);
+  const keep = x.toPolygons().filter((pl) => { let a = 0; for (let i = 0; i < pl.length; i++) { const u = pl[i], v = pl[(i + 1) % pl.length]; a += u[0] * v[1] - v[0] * u[1]; } return a / 2 > 12; });
+  return keep.length ? M.CrossSection.ofPolygons(keep, 'Positive') : null;
+}
+function hollowVoids(project, an) {
+  const sp = saveParams(project), { W, D, H } = an, flip = (xs) => xs.mirror([0, 1]).translate([0, D]), out = [];
+  const shapes = [], discsAll = [];
+  an._items.forEach((it) => { let x = flip(it.pk); const raw = ensureCCW(it.o.outline);
+    for (const t of it.o.notches || []) { const { pt, nx, ny } = pointAtT(raw, t); const [lx, ly] = rotPt([pt[0] + nx * it.eff.margin, pt[1] + ny * it.eff.margin], it.o.rot || 0);
+      const dsc = M.CrossSection.circle(it.eff.notch / 2, 32).translate([lx + it.o.x, D - (ly + it.o.y)]); x = x.add(dsc); discsAll.push(dsc); }
+    shapes.push(x); });
+  const grid = hexGrid(W, D, sp.flat, sp.rib);
+  // A: web areas, from above the foot up to `wall` below the top
+  const footprint = cs(rrect(0, 0, W, D, GF.topR, 12)).offset(-sp.wall, 'Round', 2, 16);
+  let web = footprint; for (const sh of shapes) web = web.subtract(sh.offset(sp.wall, 'Round', 2, 16));
+  const hA = H - sp.wall - sp.z0, pa = hA >= sp.minH ? pieces(web, grid) : null;
+  if (pa) out.push(pa.extrude(hA).translate([0, 0, sp.z0]));
+  // B: below each pocket floor (roof `wall` under the floor); shrunk slightly when pockets are closer than the wall
+  const inset = Math.max(0, (sp.wall - GF.wall) / 2), notchU = discsAll.length ? discsAll.reduce((a, d) => a.add(d)) : null;
+  an._items.forEach((it, i) => { const depth = an.objects[i].eff.depth, top = H - depth - sp.wall, h = top - sp.z0; if (h < sp.minH) return;
+    let reg = flip(it.pk); if (inset > 0) reg = reg.offset(-inset, 'Round', 2, 16); if (notchU) reg = reg.subtract(notchU.offset(sp.wall / 2, 'Round', 2, 12));
+    const pb = pieces(reg, grid); if (pb) out.push(pb.extrude(h).translate([0, 0, sp.z0])); });
+  return out.length ? M.Manifold.union(out) : null;
 }
 
 export function meshOf(man) { const m = man.getMesh(); return { pos: m.vertProperties, np: m.numProp, tri: m.triVerts }; }

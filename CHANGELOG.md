@@ -1,3 +1,7 @@
+# Auto arrange + Save material (sw cache v8)
+- Auto arrange: true-polygon nesting of pockets (outline + margin + notch discs) into the smallest bin, raster + distance-transform walls, rotations, restarts, exact verification, undo, lock per object, wall slider (default 3 mm). See README. Tests: tests/arrange_test.mjs (synthetic 5 to 12 shapes + real outlines, manifold-verified), tests/arrange_ui.mjs.
+- Save material (optional): sealed hexagonal voids, saving percent, 3D cutaway. Tests: tests/save_material_test.py, tests/save_ui.mjs.
+
 ## Fix: pocket floor cut through the feet (depth 10 'black cross')
 - Root cause: floor 2 mm gave bin height 14 mm / floor z = 4 mm, below the foot height (4.75 mm), so the pocket cut opened slots along the 42 mm cell boundaries (the foot grooves). Real geometry bug, also at depth 30 (floor z = 5). Floor is now at least 5.55 mm above the base. Regression: tests/depth_notch_test.py. sw cache v7.
 

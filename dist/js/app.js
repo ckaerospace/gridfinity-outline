@@ -1,4 +1,5 @@
-import { initManifold, analyze, buildBin, toSTL, meshOf, findSpot, effective, GF } from './bin.js';
+import { arrange } from './pack.js';
+import { initManifold, analyze, buildBin, saveParams, toSTL, meshOf, findSpot, effective, GF } from './bin.js';
 import { worldGeometry, toSVG, toDXF } from './export2d.js';
 import { openCapture } from './capture.js';
 import { init3D, setMesh } from './view3d.js';
@@ -8,8 +9,10 @@ const $ = (s) => document.querySelector(s);
 const NS = 'http://www.w3.org/2000/svg';
 const state = { project: null, sel: null, view: 'plan', notchMode: false, an: null, nextId: 1, ready: false };
 const KEY = 'gf-outline-project-v1';
-const fresh = () => ({ cells: { auto: true, nx: 1, ny: 1 }, height: { auto: true, hu: 3 }, floor: 2, defaults: { margin: 2, notch: 16, depth: 20 }, objects: [] });
+const fresh = () => ({ arrange: { wall: 3, rotate: true }, save: { on: false, saving: 60, wall: 1.6 }, cells: { auto: true, nx: 1, ny: 1 }, height: { auto: true, hu: 3 }, floor: 2, defaults: { margin: 2, notch: 16, depth: 20 }, objects: [] });
 try { const s = JSON.parse(localStorage.getItem(KEY) || 'null'); state.project = s && s.objects ? s : fresh(); } catch { state.project = fresh(); }
+if (!state.project.arrange) state.project.arrange = { wall: 3, rotate: true };
+if (!state.project.save) state.project.save = { on: false, saving: 60, wall: 1.6 };
 state.nextId = 1 + state.project.objects.reduce((m, o) => Math.max(m, o.id), 0);
 state.sel = state.project.objects[0]?.id ?? null;
 const P = () => state.project, selObj = () => P().objects.find((o) => o.id === state.sel);
@@ -26,6 +29,7 @@ function renderSummary() {
   const a = state.an; $('#summary').textContent = P().objects.length ? `${a.nx} x ${a.ny} x ${a.hu}u  |  ${a.W.toFixed(1)} x ${a.D.toFixed(1)} x ${a.H} mm` : '';
   $('#empty').hidden = P().objects.length > 0 || state.view !== 'plan'; $('#btnExport').disabled = !P().objects.length;
   $('#notchHint').hidden = !state.notchMode;
+  $('#arrBar').hidden = !P().objects.length || state.view !== 'plan'; if ($('#arrBar').hidden) $('#arrMsg').hidden = true;
 }
 const el = (tag, attrs = {}, parent) => { const e = document.createElementNS(NS, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); parent && parent.appendChild(e); return e; };
 const path = (pts) => 'M' + pts.map((p) => p[0].toFixed(2) + ' ' + p[1].toFixed(2)).join('L') + 'Z';
@@ -106,7 +110,7 @@ function resolveOverlap(o) {
 function renderChips() {
   const c = $('#chips'); c.innerHTML = '';
   P().objects.forEach((o, i) => { const b = document.createElement('button'), info = state.an.objects[i]; b.className = 'chip' + (o.id === state.sel ? ' on' : '') + (info.issues.some((s) => !s.startsWith('depth')) ? ' bad' : '');
-    b.textContent = `${o.name}  ${r1(info.eff.depth)} mm`; b.onclick = () => { state.sel = o.id; state.notchMode = false; renderAll(); }; c.appendChild(b); });
+    b.textContent = `${o.locked ? '\u{1F512} ' : ''}${o.name}  ${r1(info.eff.depth)} mm`; b.onclick = () => { state.sel = o.id; state.notchMode = false; renderAll(); }; c.appendChild(b); });
   $('#panel').style.display = P().objects.length ? '' : 'none';
 }
 function field(label, { min, max, step = 1, value, over, onSet, onReset, unit = 'mm' }) {
@@ -135,11 +139,12 @@ function renderPanel() {
 
 function actionsEl(o, i, info) {
   const act = document.createElement('div'); act.className = 'actions';
-  act.innerHTML = `<button id="aNotch" class="${state.notchMode ? 'on' : ''}">${state.notchMode ? 'Tap edge...' : 'Add notch'}</button><button id="aClear">Clear notches (${(o.notches || []).length})</button><button id="a90">Rotate 90</button><button id="aRe">Retake</button><button id="aDel" class="danger">Remove</button>`;
+  act.innerHTML = `<button id="aNotch" class="${state.notchMode ? 'on' : ''}">${state.notchMode ? 'Tap edge...' : 'Add notch'}</button><button id="aClear">Clear notches (${(o.notches || []).length})</button><button id="a90">Rotate 90</button><button id="aLock" class="${o.locked ? 'on' : ''}">${o.locked ? '\u{1F512} Locked' : '\u{1F513} Lock'}</button><button id="aRe">Retake</button><button id="aDel" class="danger">Remove</button>`;
   
   act.querySelector('#aNotch').onclick = () => { state.notchMode = !state.notchMode; if (state.view !== 'plan') setView('plan'); renderSummary(); renderPanel(); };
   act.querySelector('#aClear').onclick = () => { o.notches = []; refresh(); };
   act.querySelector('#a90').onclick = () => { o.rot = ((((o.rot || 0) + 90 + 180) % 360) - 180); resolveOverlap(o); refresh(); };
+  act.querySelector('#aLock').onclick = () => { o.locked = !o.locked; refresh(); };
   act.querySelector('#aDel').onclick = () => { P().objects.splice(i, 1); state.sel = P().objects[0]?.id ?? null; refresh(); };
   act.querySelector('#aRe').onclick = async () => { const r = await openCapture($('#capture'), { depth: info.eff.depth, title: 'Retake ' + o.name }); if (r) { o.outline = r.outline; o.notches = []; resolveOverlap(o); refresh(); } };
   return act;
@@ -152,7 +157,8 @@ function update3D() {
   if (!P().objects.length) { return; }
   const a = state.an, bin = buildBin(P(), analyze(P())), m = meshOf(bin);
   const labels = P().objects.map((o, i) => { const c = centroid(worldGeometry(P(), a)[i].outline); return { x: c[0], y: a.D - c[1], z: a.H - a.objects[i].eff.depth, text: r1(a.objects[i].eff.depth) + ' mm' }; });
-  setMesh({ pos: m.pos, np: m.np, tri: m.tri }, a, labels); window.__gfMesh = { tris: m.tri.length / 3 };
+  const sp = P().save.on ? saveParams(P()) : null; $('#btnCut').hidden = !sp; if (!sp) state.cut = false;
+  setMesh({ pos: m.pos, np: m.np, tri: m.tri }, { ...a, cutZ: sp && state.cut ? (sp.z0 + a.H - sp.wall) / 2 : null }, labels); window.__gfMesh = { tris: m.tri.length / 3 };
   bin.delete && bin.delete();
 }
 function setView(v) {
@@ -160,6 +166,7 @@ function setView(v) {
   $('#view3d').hidden = v !== '3d'; $('#plan').style.display = v === 'plan' ? '' : 'none';
   if (v === '3d') { init3D($('#view3d'), $('#labels3d')); schedule3D(); } renderSummary();
 }
+$('#btnCut').onclick = () => { state.cut = !state.cut; $('#btnCut').classList.toggle('on', state.cut); schedule3D(); };
 document.querySelectorAll('#viewSeg button').forEach((b) => (b.onclick = () => setView(b.dataset.view)));
 
 // ---------------- add object ----------------
@@ -182,6 +189,8 @@ $('#btnBin').onclick = () => openDlg((box, close) => {
   <div class="tog" ${p.cells.auto ? 'style="opacity:.4;pointer-events:none"' : ''}><span>Cells (x by y)</span><span class="stepper"><button data-s="nx-">-</button><b id="vnx">${p.cells.auto ? a.nx : p.cells.nx}</b><button data-s="nx+">+</button>&nbsp;<button data-s="ny-">-</button><b id="vny">${p.cells.auto ? a.ny : p.cells.ny}</b><button data-s="ny+">+</button></span></div>
   <div class="tog"><span>Height: automatic</span><input class="sw" type="checkbox" id="hAuto" ${p.height.auto ? 'checked' : ''}></div>
   <div class="tog" ${p.height.auto ? 'style="opacity:.4;pointer-events:none"' : ''}><span>Height units</span><span class="stepper"><button data-s="hu-">-</button><b id="vhu">${p.height.auto ? a.hu : p.height.hu}</b><button data-s="hu+">+</button></span></div>
+  <div class="tog"><span>Save material (hollow, sealed hex voids)</span><input class="sw" type="checkbox" id="svOn" ${p.save.on ? 'checked' : ''}></div>
+  <div id="svBox" ${p.save.on ? '' : 'hidden'}><div id="svf"></div><p class="note" id="svEst">Estimating...</p></div>
   <h3 style="margin-top:14px">Defaults for new objects</h3><div id="defs"></div>
   <p class="note">Each object can override these in its own panel. Bin height is the deepest pocket plus the floor, rounded up to 7 mm units.</p>
   <button class="big-btn p" id="dClose" style="width:100%;margin-top:8px">Done</button>`;
@@ -194,7 +203,18 @@ $('#btnBin').onclick = () => openDlg((box, close) => {
   box.querySelectorAll('[data-s]').forEach((b) => b.onclick = () => { const s = b.dataset.s, k = s.slice(0, -1), d = s.endsWith('+') ? 1 : -1;
     if (k === 'hu') p.height.hu = clamp(p.height.hu + d, 1, GF.maxUnits); else p.cells[k] = clamp(p.cells[k] + d, 1, 8); refresh(); close(); $('#btnBin').click(); });
   box.querySelector('#dClose').onclick = close;
+  const svf = box.querySelector('#svf'), est = () => { clearTimeout(est.t); est.t = setTimeout(async () => { const e = box.querySelector('#svEst'); if (!e || !p.save.on) return; const r = await estimateSaving(); if (e.isConnected) e.textContent = r; }, 350); };
+  svf.appendChild(field('Saving (0 strong, 100 max)', { min: 0, max: 100, step: 1, value: p.save.saving, unit: '%', onSet: (v) => { p.save.saving = v; save(); est(); if (state.view === '3d') schedule3D(); } }));
+  svf.appendChild(field('Rib / wall', { min: 1.2, max: 4, step: 0.1, value: p.save.wall, onSet: (v) => { p.save.wall = v; save(); est(); if (state.view === '3d') schedule3D(); } }));
+  box.querySelector('#svOn').onchange = (e) => { p.save.on = e.target.checked; save(); refresh(); close(); $('#btnBin').click(); };
+  if (p.save.on) est();
 });
+// Estimated material saving: builds the bin with and without the voids (volumes of the two solids)
+async function estimateSaving() {
+  const pr = P(); if (!pr.objects.length) return 'Add an object first.'; await new Promise((r) => setTimeout(r, 20));
+  const info = {}, b = buildBin(pr, analyze(pr), info); b.delete && b.delete(); state.saveInfo = info;
+  return `Estimated material saving: about ${info.pct.toFixed(0)} percent (solid ${(info.solidVol / 1000).toFixed(0)} cm3 to ${(info.redVol / 1000).toFixed(0)} cm3). Voids are sealed inside, start above the Gridfinity foot, leave at least ${info.params.wall.toFixed(1)} mm to the outside, pockets and the top, ribs of ${info.params.rib.toFixed(1)} mm, and are at most ${(info.params.flat * 1.155).toFixed(0)} mm across (bridgeable). Feet and baseplate fit are unchanged. Use 3D > Cutaway to look inside.`;
+}
 function openDlg(build) {
   const d = $('#sheetDlg'), box = document.createElement('div'); d.innerHTML = ''; d.appendChild(box); d.hidden = false;
   const close = () => { d.hidden = true; d.innerHTML = ''; }; d.onclick = (e) => { if (e.target === d) close(); }; build(box, close);
@@ -214,10 +234,63 @@ export function exportAll(kind, obj) {
 $('#btnExport').onclick = () => openDlg((box, close) => {
   const a = state.an, o = selObj(), bad = a.objects.filter((x) => x.issues.some((s) => !s.startsWith('depth'))).length;
   box.innerHTML = `<h3>Export</h3>${bad ? `<div class="err" style="margin-bottom:8px">${bad} object(s) overlap or sit outside the bin. Fix them before printing.</div>` : ''}
-  <p class="note">Millimetres. The STL is a Gridfinity bin ${a.nx} x ${a.ny} x ${a.hu}u (${a.W.toFixed(1)} x ${a.D.toFixed(1)} x ${a.H} mm), no stacking lip. SVG and DXF contain the traced outline (red or OUTLINE layer), the pocket with margin (POCKET) and notches.</p>
+  <p class="note">Millimetres. The STL is a Gridfinity bin ${a.nx} x ${a.ny} x ${a.hu}u (${a.W.toFixed(1)} x ${a.D.toFixed(1)} x ${a.H} mm), no stacking lip. ${P().save.on ? `<strong>Save material is on</strong>: the STL contains sealed hexagonal voids (see Bin).` : ''} SVG and DXF contain the traced outline (red or OUTLINE layer), the pocket with margin (POCKET) and notches.</p>
   <div class="actions" style="flex-direction:column"><button class="big-btn p" data-k="stl">Bin STL</button><button data-k="svg">Layout SVG</button><button data-k="dxf">Layout DXF</button>
   ${o ? `<button data-k="osvg">${o.name} SVG</button><button data-k="odxf">${o.name} DXF</button>` : ''}</div>`;
   box.querySelectorAll('[data-k]').forEach((b) => b.onclick = () => { exportAll(b.dataset.k, o); close(); toast('Saved ' + b.textContent); });
+});
+
+
+// ---------------- auto arrange ----------------
+function runPack(objects, params) { // Web Worker (module) with main-thread fallback
+  return new Promise((resolve) => {
+    let done = false; const fin = (r) => { if (!done) { done = true; resolve(r); } };
+    const main = () => setTimeout(() => { try { fin(arrange(objects, params)); } catch (e) { fin({ ok: false, reason: 'Arrange failed: ' + e.message }); } }, 30);
+    try {
+      const w = new Worker(new URL('./pack-worker.js', import.meta.url), { type: 'module' }), timer = setTimeout(() => { w.terminate(); main(); }, params.budgetMs * 4 + 6000);
+      w.onmessage = (e) => { clearTimeout(timer); w.terminate(); if (e.data.ok) fin(e.data.result); else main(); };
+      w.onerror = () => { clearTimeout(timer); w.terminate(); main(); };
+      w.postMessage({ objects, params });
+    } catch { main(); }
+  });
+}
+function arrMsg(text, kind) { const m = $('#arrMsg'); m.textContent = text; m.className = 'arrmsg ' + (kind || ''); m.hidden = !text; }
+const snapshot = () => ({ cells: JSON.parse(JSON.stringify(P().cells)), objs: P().objects.map((o) => ({ id: o.id, x: o.x, y: o.y, rot: o.rot || 0 })) });
+function restore(sn) { P().cells = sn.cells; for (const q of sn.objs) { const o = P().objects.find((x) => x.id === q.id); if (o) { o.x = q.x; o.y = q.y; o.rot = q.rot; } } }
+async function autoArrange() {
+  const objs = P().objects; if (!objs.length) return;
+  const ar = P().arrange, before = analyze(P()), btn = $('#btnArr'), sn = snapshot();
+  const list = objs.map((o) => { const e = effective(P(), o); return { id: o.id, outline: o.outline, rot: o.rot || 0, x: o.x, y: o.y, margin: e.margin, notchR: e.notch / 2, notches: o.notches || [], locked: !!o.locked }; });
+  btn.disabled = true; btn.textContent = 'Arranging...'; arrMsg('Packing ' + objs.length + ' object' + (objs.length > 1 ? 's' : '') + '...', '');
+  const t0 = performance.now(); const r = await runPack(list, { wall: ar.wall, allowRot: ar.rotate, budgetMs: 1800, seed: 7, prefer: [before.nx, before.ny] });
+  btn.disabled = false; btn.textContent = 'Auto arrange';
+  const cb = before.nx * before.ny;
+  if (!r.ok) { arrMsg(r.reason || 'Could not arrange.', 'err'); return; }
+  const ca = r.nx * r.ny;
+  if (ca > cb && !before.objects.some((x) => x.issues.some((q) => !q.startsWith('depth')))) {
+    arrMsg(`With a ${ar.wall} mm wall between pockets the objects need ${r.nx} x ${r.ny} cells (${ca}); the current layout is ${before.nx} x ${before.ny} (${cb}). Kept the current layout. Try a smaller wall.`, 'warn'); return; }
+  state.undo = { sn, label: `${before.nx} x ${before.ny}` };
+  for (const q of r.placements) { const o = objs.find((x) => x.id === q.id); o.x = q.x; o.y = q.y; o.rot = q.rot; }
+  const wasManual = !P().cells.auto; P().cells.auto = true; refresh();
+  const a = state.an, bad = a.objects.some((x) => x.issues.some((q) => !q.startsWith('depth')));
+  if (bad) { restore(sn); state.undo = null; refresh(); arrMsg('Arrange produced an invalid layout and was reverted (this should not happen).', 'err'); return; }
+  $('#btnArrUndo').hidden = false;
+  const saved = cb - a.nx * a.ny, pct = cb ? Math.round(100 * saved / cb) : 0;
+  let m = `${before.nx} x ${before.ny} to ${a.nx} x ${a.ny} cells` + (saved > 0 ? ` (saved ${saved} of ${cb} cells, ${pct}%)` : saved === 0 ? ' (same size, tidier with wall ' + ar.wall + ' mm)' : '') + `. Wall between pockets at least ${Math.floor(r.minGap * 10) / 10} mm. ${Math.round((performance.now() - t0) / 100) / 10} s.`;
+  if (a.hu !== before.hu) m += ` Bin height changes from ${before.hu}u to ${a.hu}u.`;
+  if (wasManual) m += ' Bin size set to automatic.';
+  arrMsg(m, saved > 0 ? 'ok' : 'warn');
+}
+$('#btnArr').onclick = autoArrange;
+$('#btnArrUndo').onclick = () => { if (!state.undo) return; restore(state.undo.sn); const l = state.undo.label; state.undo = null; $('#btnArrUndo').hidden = true; refresh(); arrMsg('Restored the previous layout (' + l + ' cells).', ''); };
+$('#btnArrOpt').onclick = () => openDlg((box, close) => {
+  const ar = P().arrange;
+  box.innerHTML = `<h3>Auto arrange</h3><p class="note">Packs all pockets (outline + margin + notch clearance) into the smallest bin, using the real shapes. Outer wall is always at least 1.2 mm. Lock an object (object panel) to keep it where it is.</p><div id="arrf"></div>
+  <div class="tog"><span>Allow rotation</span><input class="sw" type="checkbox" id="arRot" ${ar.rotate ? 'checked' : ''}></div>
+  <button class="big-btn p" id="arClose" style="width:100%;margin-top:8px">Done</button>`;
+  box.querySelector('#arrf').appendChild(field('Wall between pockets', { min: 1.2, max: 10, step: 0.1, value: ar.wall, onSet: (v) => { ar.wall = v; save(); } }));
+  box.querySelector('#arRot').onchange = (e) => { ar.rotate = e.target.checked; save(); };
+  box.querySelector('#arClose').onclick = close;
 });
 
 // ---------------- boot ----------------
@@ -225,4 +298,4 @@ $('#btnExport').onclick = () => openDlg((box, close) => {
   await initManifold(); state.ready = true; refresh();
   if ('serviceWorker' in navigator && location.protocol !== 'file:') navigator.serviceWorker.register('sw.js').catch(() => {});
 })();
-window.__gf = { state, addOutline, refresh, exportAll, setView, analyze: () => analyze(P()), openCapture: () => addObject(), capture: $('#capture') };
+window.__gf = { autoArrange, state, addOutline, refresh, exportAll, setView, analyze: () => analyze(P()), openCapture: () => addObject(), capture: $('#capture') };

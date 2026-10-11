@@ -27,9 +27,16 @@
     <button data-view="3d">3D</button>
   </div>
 
+  <div class="arr" id="arrBar" hidden>
+    <button id="btnArr" class="arrbtn">Auto arrange</button>
+    <button id="btnArrUndo" class="arrundo" hidden>Undo</button>
+    <button id="btnArrOpt" class="arropt" aria-label="Arrange options">Options</button>
+  </div>
+  <div class="arrmsg" id="arrMsg" hidden></div>
+
   <section id="stage" class="stage">
     <svg id="plan" xmlns="http://www.w3.org/2000/svg"></svg>
-    <div id="view3d" class="view3d" hidden><div id="labels3d"></div></div>
+    <div id="view3d" class="view3d" hidden><div id="labels3d"></div><button id="btnCut" class="cutbtn" hidden>Cutaway</button></div>
     <div id="empty" class="empty" hidden>
       <p class="big">No objects yet</p>
       <p class="muted">Photograph an object lying on the printed sheet.</p>

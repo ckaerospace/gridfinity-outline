@@ -75,3 +75,12 @@ button[disabled]{opacity:.4}
 .zoomctl{position:absolute;right:8px;top:8px;display:flex;gap:6px;align-items:center;background:rgba(0,0,0,.55);border-radius:10px;padding:4px}
 .zoomctl button{color:#fff;background:rgba(255,255,255,.14);border:1px solid rgba(255,255,255,.3);border-radius:8px;min-width:38px;height:38px;padding:0 8px;font-size:18px;line-height:1}
 .zoomctl span{color:#fff;font-size:12px;min-width:30px;text-align:center}
+
+.arr{display:flex;gap:8px;margin:0 16px 8px}
+.arr button{min-height:44px;border-radius:12px;border:1px solid var(--line);background:var(--s1);padding:0 14px;font-weight:600;font-size:14px}
+.arr .arrbtn{flex:1;background:var(--ac);color:#fff;border:0}
+.arr button[disabled]{opacity:.55}
+.arrmsg{margin:-2px 16px 8px;font-size:13px;padding:8px 12px;border-radius:10px;background:var(--s1);border:1px solid var(--line);font-variant-numeric:tabular-nums}
+.arrmsg.ok{border-color:var(--ok)}.arrmsg.warn{border-color:#e8b04a}.arrmsg.err{border-color:var(--bad);color:var(--bad)}
+.tog{display:flex;align-items:center;justify-content:space-between;gap:10px;min-height:44px}
+.cutbtn{position:absolute;right:10px;top:10px;min-height:38px;padding:0 14px;border-radius:999px;background:var(--s2);border:1px solid var(--line);font-size:13px;z-index:2}.cutbtn.on{border-color:var(--ac);color:var(--ac)}

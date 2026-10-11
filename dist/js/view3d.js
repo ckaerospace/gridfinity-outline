@@ -33,8 +33,10 @@ export function setMesh(m, info, labelData) {
   const n = m.pos.length / m.np, pos = new Float32Array(n * 3); for (let i = 0; i < n; i++) { pos[3 * i] = m.pos[i * m.np]; pos[3 * i + 1] = m.pos[i * m.np + 1]; pos[3 * i + 2] = m.pos[i * m.np + 2]; }
   let g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.BufferAttribute(pos, 3)); g.setIndex(new THREE.BufferAttribute(m.tri, 1));
   g = g.toNonIndexed(); g.computeVertexNormals();
-  mesh = new THREE.Mesh(g, new THREE.MeshStandardMaterial({ color: 0xb9bec6, roughness: 0.75, metalness: 0.05, flatShading: true }));
-  edges = new THREE.LineSegments(new THREE.EdgesGeometry(g, 35), new THREE.LineBasicMaterial({ color: 0x20242a, transparent: true, opacity: 0.55 }));
+  const clip = info.cutZ != null ? [new THREE.Plane(new THREE.Vector3(0, 0, -1), info.cutZ)] : [];
+  renderer.localClippingEnabled = true;
+  mesh = new THREE.Mesh(g, new THREE.MeshStandardMaterial({ color: 0xb9bec6, roughness: 0.75, metalness: 0.05, flatShading: true, clippingPlanes: clip, side: clip.length ? THREE.DoubleSide : THREE.FrontSide }));
+  edges = new THREE.LineSegments(new THREE.EdgesGeometry(g, 35), new THREE.LineBasicMaterial({ color: 0x20242a, transparent: true, opacity: 0.55, clippingPlanes: clip }));
   scene.add(mesh, edges); labels = labelData.map((l) => ({ p: [l.x, l.y, l.z], text: l.text }));
   const key = [info.W, info.D, info.H].join();
   if (key !== fitted) { fitted = key; const c = new THREE.Vector3(info.W / 2, info.D / 2, info.H / 2), r = Math.hypot(info.W, info.D, info.H);

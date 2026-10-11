@@ -1,7 +1,7 @@
 // Smart select (MobileSAM) vs classic on the real photos. usage: node tests/run_smart.mjs [tag]
-import { chromium } from 'playwright'; import fs from 'fs';
+import * as pw from 'playwright'; import fs from 'fs';
 const tag = process.argv[2] || 'smart', files = ['real-floss-blue-hard-shadow', 'real-white-part-soft-shadow', 'real-white-part-far-hard-shadow'];
-const browser = await chromium.launch(); const page = await (await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, hasTouch: true, isMobile: true, serviceWorkers: 'block' })).newPage();
+const browser = await pw[process.env.PWB || 'chromium'].launch(); const page = await (await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, hasTouch: true, isMobile: true, serviceWorkers: 'block' })).newPage();
 page.on('pageerror', (e) => console.log('PAGEERR', e.message)); page.on('console', (m) => { if (m.type() === 'error') console.log('CONSOLE', m.text()); });
 await page.goto(process.env.URL || 'http://localhost:8123/'); await page.waitForFunction(() => window.__gfReady);
 const out = {};

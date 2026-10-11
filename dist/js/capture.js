@@ -7,7 +7,7 @@ export const debug = { last: null };
 
 export function openCapture(root, { depth = 20, title = 'Add object' } = {}) {
   return new Promise((resolve) => {
-    let cv = null, photo = null, cal = null, rect = null, seg = null, res = null, edits = [], pick = null, tol = 24, shadow = 85, mode = 'pick', closed = false, objH = 0, cam = null, smoothV = SMOOTH_DEFAULT, smartSess = null, smartPts = [], smartBusy = false;
+    let cv = null, photo = null, cal = null, rect = null, seg = null, res = null, edits = [], pick = null, tol = 24, shadow = 85, mode = 'pick', closed = false, objH = 0, cam = null, smoothV = SMOOTH_DEFAULT, smartSess = null, smartPts = [], smartBusy = false, smartOff = false;
     const done = (v) => { if (closed) return; closed = true; if (rect) rect.mat.delete(); root.hidden = true; root.innerHTML = ''; resolve(v); };
     root.hidden = false;
     const head = (t) => `<div class="ov-head"><h2>${t}</h2><button class="ghost" data-x>Cancel</button></div>`;
@@ -196,12 +196,17 @@ export function openCapture(root, { depth = 20, title = 'Add object' } = {}) {
       c.addEventListener('pointerup', up); c.addEventListener('pointercancel', up);
       c.addEventListener('wheel', (e) => { e.preventDefault(); const [x, y] = cl(e); zoomAt(x, y, V.z * Math.exp(-e.deltaY * 0.0018)); }, { passive: false });
       async function doSmart(x, y, label) {
-        if (smartBusy) return; smartBusy = true; const info = root.querySelector('#rInfo');
+        if (smartBusy) return; const info = root.querySelector('#rInfo');
+        if (!(isFinite(x) && isFinite(y))) return; x = Math.min(rect.w - 1, Math.max(0, x)); y = Math.min(rect.h - 1, Math.max(0, y)); smartBusy = true;
         try {
           if (!smartSess) { const cvs = document.createElement('canvas'); cvs.width = rect.w; cvs.height = rect.h; cvs.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(rect.mat.data), rect.w, rect.h), 0, 0);
-            const { smartPrepare } = await import('./smart.js'); smartSess = await smartPrepare(cvs, (t) => { info.textContent = t + '...'; }); debug.smartEncMs = smartSess.tEnc; }
+            const { smartPrepare } = await import('./smart.js'); smartSess = await smartPrepare(cvs, (t) => { info.textContent = t + '...'; }); cvs.width = cvs.height = 0; debug.smartEncMs = smartSess.tEnc; }
           smartPts.push({ x, y, label }); info.textContent = 'Smart select...'; seg.smart = await smartSess.decode(smartPts); debug.smartDecMs = smartSess.tDec; debug.smartIou = smartSess.iou; runSeg(); paint();
-        } catch (e) { console.error(e); smartPts.pop(); info.textContent = 'Smart select is not available here: ' + (e.message || e); debug.smartErr = String(e.message || e); }
+        } catch (e0) { console.error(e0); smartPts.pop(); smartSess = null;
+          let e = e0; try { const m = await import('./smart.js'); e = m.describeSmartError(e0); } catch (_) {}
+          debug.smartErr = String((e0 && e0.message) || e0); debug.smartErrDetails = e.details;
+          if (e.memory) { root.querySelectorAll('#rModes [data-m="smart"], #rModes [data-m="smartneg"]').forEach((b) => { b.disabled = true; b.title = 'Not available on this device'; }); smartOff = true; if (mode === 'smart' || mode === 'smartneg') mode = 'pick'; }
+          paint(); info.innerHTML = ''; const t = document.createElement('span'); t.textContent = e.message || String(e); const d = document.createElement('small'); d.style.cssText = 'display:block;opacity:.7;word-break:break-word'; d.textContent = 'Details: ' + (e.details || e0); info.append(t, d); }
         smartBusy = false;
       }
       root.querySelector('#rRetake').onclick = () => stepPick();

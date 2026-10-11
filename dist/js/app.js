@@ -125,7 +125,7 @@ function renderPanel() {
   box.appendChild(actionsEl(o, i, info));
   { const mr = minRect(o.outline), pr = minRect(info.poly), n = document.createElement('div'); n.className = 'note'; n.style.cssText = 'font-size:12px;opacity:.75;margin:2px 0 6px';
     n.textContent = `Object ${r1(mr.l)} x ${r1(mr.w)} mm, pocket ${r1(pr.l)} x ${r1(pr.w)} mm (with ${r1(info.eff.margin)} mm margin; long x short side)`; box.appendChild(n); }
-  box.appendChild(mk('depth', 'Depth', 1, P().height.auto ? GF.maxUnits * 7 - P().floor : a.maxDepth, 0.5));
+  box.appendChild(mk('depth', 'Depth', 1, P().height.auto ? GF.maxUnits * 7 - Math.max(P().floor, GF.footH + GF.minFloorAboveFoot) : a.maxDepth, 0.5));
   box.appendChild(mk('margin', 'Margin', 0, 10, 0.1));
   box.appendChild(mk('notch', 'Notch size', 6, 40, 0.5));
   box.appendChild(field('Rotation', { min: -180, max: 180, step: 1, value: o.rot || 0, unit: 'deg', onSet: (v) => { o.rot = v; resolveOverlap(o); refresh(); } }));

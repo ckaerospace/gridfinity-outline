@@ -3,6 +3,7 @@ import Module from '../vendor/manifold.js';
 import { bbox, rotPt, pointAtT, ensureCCW } from './geom.js';
 
 export const GF = { pitch: 42, hUnit: 7, clearance: 0.5, topR: 3.75, foot: { chamfer1: 0.8, vert: 1.8, chamfer2: 2.15 }, wall: 1.2, maxUnits: 12 };
+GF.minFloorAboveFoot = 0.8; // min material between foot-groove top (z=4.75) and pocket floor
 GF.footH = GF.foot.chamfer1 + GF.foot.vert + GF.foot.chamfer2; // 4.75
 let M = null;
 export async function initManifold() { if (M) return M; const w = await Module(); w.setup(); M = w; return M; }
@@ -40,7 +41,7 @@ function worldXf(x, o) { return x.rotate(o.rot || 0).translate([o.x, o.y]); }
 
 // Analyse project: effective values, bin size, issues. Returns plain data + CrossSections (caller keeps them only transiently).
 export function analyze(project) {
-  const { wall } = GF, floor = project.floor;
+  const { wall } = GF, floor = Math.max(project.floor, GF.footH + GF.minFloorAboveFoot); // pocket floor must stay above the foot grooves (z = footH), else the cut opens slots along the cell boundaries
   const items = project.objects.map((o) => {
     const eff = effective(project, o), pk = worldXf(localPocket(o, eff.margin), o), b = pk.bounds();
     return { o, eff, pk, b };

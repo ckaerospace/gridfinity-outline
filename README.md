@@ -35,7 +35,7 @@ The default tolerance is the **most stable threshold**: where the foreground are
 ## Gridfinity geometry (checked against Zack Freedman's spec as documented by gridfinity-rebuilt-openscad and community docs)
 42 mm pitch, 7 mm height unit, bin footprint 41.5 mm (0.25 mm clearance per side; bin outer = 42n - 0.5 mm), top corner radius 3.75 mm.
 Foot per cell: 0.8 mm 45 degree chamfer, 1.8 mm vertical, 2.15 mm 45 degree chamfer (4.75 mm), bottom 35.6 mm square with 0.8 mm corner radius, concentric radii. Verified by slicing the exported STL: 35.7 (z=0.05), 37.0 (z=0.7), 37.2 (z=1.5 and 2.55), 40.0 (z=4.0), 41.4 (z=4.7) mm.
-Height = number of 7 mm units: the deepest pocket + floor (default 2 mm) rounded up to whole units (min 2, max 12). Each pocket depth is clamped to height - floor. Cells are chosen automatically (grow in whole cells) or set manually.
+Height = number of 7 mm units: the deepest pocket + floor (default 2 mm, but never less than foot height 4.75 + 0.8 = 5.55 mm: a thinner floor would cut through the foot grooves and open slots along the cell boundaries; so depth 10 gives a 3u / 21 mm bin) rounded up to whole units (min 2, max 12). Each pocket depth is clamped to height - floor. Cells are chosen automatically (grow in whole cells) or set manually.
 
 ### Simplifications (exactly)
 - **No stacking lip** (flat top at H = 7n mm).

@@ -5,7 +5,7 @@ const dir = process.env.DIR || 'tests/synth', gt = JSON.parse(fs.readFileSync(di
 const only = process.argv[2] && process.argv[2] !== '-' ? process.argv[2] : null; const OUT = process.env.OUT || 'tests/synth_results.json';
 const browser = await chromium.launch();
 const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
-const page = await ctx.newPage();
+const page = await ctx.newPage(); await page.addInitScript(() => { localStorage.setItem('gf-intro-done', '1'); localStorage.setItem('gf-more-review', '1'); localStorage.setItem('gf-more-obj', '1'); });
 page.on('pageerror', (e) => console.log('PAGEERR', e.message));
 page.on('console', (m) => { if (m.type() === 'error') console.log('CONSOLE', m.text()); });
 await page.goto(URL); await page.waitForFunction(() => window.__gfReady);

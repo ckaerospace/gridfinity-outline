@@ -4,7 +4,8 @@
 // Walls between shapes come from a distance-transform dilation of the placed shapes; an exact polygon check (verifyLayout) is the final gate, and the raster is re-run with extra slack if it fails.
 import { pointAtT, ensureCCW, area, minRect, rotPt } from './geom.js';
 
-export const PITCH = 42, CLEAR = 0.5, OUTER_WALL = 1.2, MAX_CELLS = 8;
+export const PITCH = 42, CLEAR = 0.5, MAX_CELLS = 8;
+export let OUTER_WALL = 1.2; // 2.6 with a stacking lip (set per run from params.outerWall)
 export const binSize = (n) => n * PITCH - CLEAR;
 const INF = 1e12, BIAS = 0.5; // raster sampling bias: shapes are grown by 0.5 mm so cell sampling rarely under-covers
 
@@ -128,7 +129,7 @@ export const cellsFor = (maxX, maxY) => [Math.max(1, Math.ceil((maxX + OUTER_WAL
 // objects: [{id, outline, rot, x, y, margin, notchR, notches, locked}]
 // params: {wall, allowRot, budgetMs, seed, maxCells (upper bound of cells to try), baselineCells}
 export function arrange(objects, params = {}) {
-  const P = { wall: 3, allowRot: true, budgetMs: 2200, seed: 7, res: 1, ...params }, t0 = Date.now(), now = () => Date.now() - t0, rand = rng(P.seed);
+  OUTER_WALL = Math.max(1.2, params.outerWall ?? 1.2); const P = { wall: 3, allowRot: true, budgetMs: 2200, seed: 7, res: 1, ...params }, t0 = Date.now(), now = () => Date.now() - t0, rand = rng(P.seed);
   const stats = { trials: 0, placements: 0, slack: 0, runs: 0 };
   const n = objects.length; if (!n) return { ok: false, reason: 'No objects', stats };
   const locked = objects.map((o) => !!o.locked), free = objects.map((_, i) => i).filter((i) => !locked[i]);

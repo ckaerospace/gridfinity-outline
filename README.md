@@ -46,12 +46,21 @@ Foot per cell: 0.8 mm 45 degree chamfer, 1.8 mm vertical, 2.15 mm 45 degree cham
 Height = number of 7 mm units: the deepest pocket + floor (default 2 mm, but never less than foot height 4.75 + 0.8 = 5.55 mm: a thinner floor would cut through the foot grooves and open slots along the cell boundaries; so depth 10 gives a 3u / 21 mm bin) rounded up to whole units (min 2, max 12). Each pocket depth is clamped to height - floor. Cells are chosen automatically (grow in whole cells) or set manually.
 
 ### Simplifications (exactly)
-- **No stacking lip** (flat top at H = 7n mm).
-- **No magnet or screw holes**, no hollow feet, no scoops/dividers. The bin is a **solid block** with pockets cut in (heavy on filament; set infill low).
-- Wall to bin edge and between pockets is at least 1.2 mm (enforced by the overlap check).
+- **Stacking lip: optional** (Bin > Stacking lip, off by default). Standard lip profile on the inside (from the bin top: 0.7 mm 45 degree, 1.8 mm vertical, 1.9 mm 45 degree; 4.4 mm tall, added above H = 7n mm), with a 0.4 mm flat on top instead of a knife edge (the top chamfer is about 38 degrees instead of 45). With the lip on, pockets keep 2.6 mm from the outside so they don't cut the lip; notches still cut through the wall and lip.
+- **Magnet holes: optional** (Bin > Magnet holes). 6.5 mm diameter x 2.4 mm deep in every foot, 4 per cell on a 26 mm square (for 6 x 2 mm magnets, press fit or glue). No screw holes. The pocket floor is always at least 5.55 mm above the base, which is at least 0.8 mm above the foot top (4.75 mm) and 3.15 mm above the magnet holes.
+- No hollow feet, no scoops/dividers. The bin is a **solid block** with pockets cut in (or use Save material).
+- Wall to bin edge is at least 1.2 mm (2.6 mm with the lip); between pockets at least 1.2 mm (enforced by the overlap check).
 - Finger notch = vertical round shaft with a spherical bottom, diameter = notch size, centred on the pocket edge (including margin); its sphere sits 0.2 mm below the pocket floor.
 - Baseplate fit was verified geometrically against the published numbers only, not test-printed. Printer-fit compensation is not included.
 - Geometry is built with manifold-3d (WASM) CSG; the STL export welds vertices on a 0.1 micron grid and drops sliver triangles so it stays closed after float32 rounding. Checked watertight with trimesh (`tests/check_stl.py`).
+
+## Projects, undo, measuring (v9)
+- **Projects**: saved automatically on this device (IndexedDB, `dist/js/store.js`): outlines, a small straightened photo per object, depths, notches, bin settings. Menu (top left) lists projects with thumbnails: open, new, rename, duplicate, delete (tap twice). Nothing is uploaded.
+- **Undo / redo** (top right, or Ctrl/Cmd+Z, Shift for redo): whole-project snapshots, committed once an edit settles (about 0.35 s), up to 80 steps. Includes removing objects.
+- **Long-press** an object (in 2D or on its chip): rename, change depth, delete.
+- **Measure** (Outline step): tap two points in the straightened photo to read the distance in mm. Good to sanity-check the scale against a ruler or the object.
+- **Print estimate** (rough): solid volume x 0.45 (about 2 walls, 15% infill, 0.2 mm layers) at about 8 mm3/s, plus 6 min; grams at 1.24 g/cm3 (PLA). Expect your slicer to differ by 30% or more.
+- **UI**: step bar Photo > Outline > Bin > Export, one main button at the bottom, advanced settings under "More", plain-language hints for missing sheet corners and shadows, a 3-screen intro on first run (Skip).
 
 ## Size, height and smoothing
 - The review screen reports the **minimum-area rectangle** (long x short side) of the outline. The axis-aligned box is shown separately; a rotated object has a much bigger axis-aligned box.
@@ -71,6 +80,8 @@ To refresh the vendored runtime: `npm i onnxruntime-web` and copy `ort.wasm.min.
 - Not tested on a real iPhone/Safari (headless Chromium only).
 
 ## Tests (`tests/`, `tools/`)
+    node tests/lip_magnet_test.mjs                 # lip / magnet / save combos: manifold, floor clearance, height, 2.6 mm lip wall; STLs in samples/
+    node tests/ux_flow.mjs  (SCHEME=light too)     # intro, step bar, ruler, undo/redo, long-press, projects, lip toggle, hints; screenshots/v9*/
     python3 -m venv .venv && .venv/bin/pip install trimesh numpy opencv-python-headless scipy shapely pillow ; npm i playwright && npx playwright install chromium
     .venv/bin/python tools/make_sheet.py dist    # regenerates sheet.svg / .pdf / .html
     .venv/bin/python tools/synth.py              # synthetic photos + ground truth -> tests/synth

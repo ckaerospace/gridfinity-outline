@@ -3,7 +3,7 @@ import { chromium } from 'playwright';
 import { SETS } from './arrange_lib.mjs';
 const browser = await chromium.launch({ args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'] });
 const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, hasTouch: true, isMobile: true, colorScheme: 'dark' });
-const page = await ctx.newPage(); const errs = []; page.on('pageerror', (e) => errs.push(e.message)); page.on('console', (m) => { if (m.type() === 'error') errs.push(m.text()); });
+const page = await ctx.newPage(); await page.addInitScript(() => { localStorage.setItem('gf-intro-done', '1'); localStorage.setItem('gf-more-review', '1'); localStorage.setItem('gf-more-obj', '1'); }); const errs = []; page.on('pageerror', (e) => errs.push(e.message)); page.on('console', (m) => { if (m.type() === 'error') errs.push(m.text()); });
 await page.goto(process.env.URL || 'http://localhost:8123/'); await page.waitForFunction(() => window.__gfReady); await page.evaluate(() => localStorage.clear()); await page.reload(); await page.waitForFunction(() => window.__gfReady);
 await page.evaluate((o) => { for (const p of o) window.__gf.addOutline(p); window.__gf.state.project.objects.forEach((x) => { x.depth = 12; }); window.__gf.refresh(); }, SETS.s5());
 await page.click('#btnArr'); await page.waitForFunction(() => !document.querySelector('#btnArr').disabled && /cells|need|Could/.test(document.querySelector('#arrMsg').textContent), null, { timeout: 30000 });

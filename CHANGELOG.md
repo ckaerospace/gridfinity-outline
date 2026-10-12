@@ -1,3 +1,10 @@
+# v9: stacking lip, magnets, measure, projects, UX overhaul (sw cache v9)
+- Optional standard stacking lip (pockets keep 2.6 mm to the outside, Auto arrange respects it) and optional 6 x 2 mm magnet holes (6.5 x 2.4 mm, 4 per cell). Pocket floor stays >= 0.8 mm above feet and magnets. Test: tests/lip_magnet_test.mjs (all combos watertight, checked with trimesh).
+- Measure: tap two points on the straightened photo to get a distance in mm.
+- Projects saved locally in IndexedDB (outlines, photo thumbnails, depths, notches, settings), project list with open/new/rename/duplicate/delete.
+- UX: step bar Photo > Outline > Bin > Export, one primary bottom button per screen, advanced controls under More, live size + rough print time/filament on the preview, plain-language hints (sheet corners not found, shadows, nothing traced), undo/redo, long-press to rename/delete/change depth, skippable 3-screen intro. Test: tests/ux_flow.mjs (dark + light), screenshots/v9, screenshots/v9-light.
+- Existing UI tests updated for the new layout (intro skipped, More panels opened).
+
 # Auto arrange + Save material (sw cache v8)
 - Auto arrange: true-polygon nesting of pockets (outline + margin + notch discs) into the smallest bin, raster + distance-transform walls, rotations, restarts, exact verification, undo, lock per object, wall slider (default 3 mm). See README. Tests: tests/arrange_test.mjs (synthetic 5 to 12 shapes + real outlines, manifold-verified), tests/arrange_ui.mjs.
 - Save material (optional): sealed hexagonal voids, saving percent, 3D cutaway. Tests: tests/save_material_test.py, tests/save_ui.mjs.

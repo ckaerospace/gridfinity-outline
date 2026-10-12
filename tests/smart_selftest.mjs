@@ -4,7 +4,7 @@ import * as pw from 'playwright';
 const files = ['real-floss-blue-hard-shadow', 'real-white-part-soft-shadow', 'real-white-part-far-hard-shadow'], URL = process.env.URL || 'http://localhost:8123/';
 const browser = await pw[process.env.PWB || 'chromium'].launch(); let fails = 0;
 const ok = (n, c, d) => { if (!c) fails++; console.log(c ? 'PASS' : 'FAIL', n, d ?? ''); };
-const mk = async (init) => { const page = await (await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, hasTouch: true, isMobile: true, serviceWorkers: 'block' })).newPage();
+const mk = async (init) => { const page = await (await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, hasTouch: true, isMobile: true, serviceWorkers: 'block' })).newPage(); await page.addInitScript(() => { localStorage.setItem('gf-intro-done', '1'); localStorage.setItem('gf-more-review', '1'); localStorage.setItem('gf-more-obj', '1'); });
   const errs = []; page.on('pageerror', (e) => errs.push(e.message)); if (init) await page.addInitScript(init); await page.goto(URL); await page.waitForFunction(() => window.__gfReady); page.errs = errs; return page; };
 const open = async (page, f) => { await page.click('#btnAdd'); await page.setInputFiles('#fLib', `tests/real/${f}.jpg`); await page.waitForFunction(() => document.querySelector('#rCv'), null, { timeout: 90000 }); await page.waitForTimeout(400); await page.click('#rModes [data-m="smart"]'); await page.locator('#rCv').scrollIntoViewIfNeeded(); };
 const tapAt = async (page, fx, fy) => { await page.locator('#rCv').scrollIntoViewIfNeeded(); const b = await page.locator('#rCv').boundingBox(); await page.mouse.click(b.x + b.width * fx, b.y + b.height * fy);

@@ -1,5 +1,5 @@
 import { chromium } from 'playwright';
-const browser = await chromium.launch(); const page = await (await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, hasTouch: true, isMobile: true, colorScheme: 'dark' })).newPage();
+const browser = await chromium.launch(); const page = await (await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, hasTouch: true, isMobile: true, colorScheme: 'dark' })).newPage(); await page.addInitScript(() => { localStorage.setItem('gf-intro-done', '1'); localStorage.setItem('gf-more-review', '1'); localStorage.setItem('gf-more-obj', '1'); });
 await page.goto('http://localhost:8123/'); await page.waitForFunction(() => window.__gfReady);
 await page.click('#btnAdd'); await page.setInputFiles('#fLib', 'tests/real/battery.jpg'); await page.waitForSelector('#mCv', { timeout: 60000 });
 await page.screenshot({ path: 'screenshots/07-manual-calibration.png' });

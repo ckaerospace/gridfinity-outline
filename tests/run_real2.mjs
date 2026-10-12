@@ -2,7 +2,7 @@
 import { chromium } from 'playwright'; import fs from 'fs';
 const tag = process.argv[2] || 'after', URL = process.env.URL || 'http://localhost:8123/';
 const files = ['real-floss-blue-hard-shadow', 'real-white-part-soft-shadow'];
-const browser = await chromium.launch(); const page = await (await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, hasTouch: true, isMobile: true })).newPage();
+const browser = await chromium.launch(); const page = await (await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, hasTouch: true, isMobile: true })).newPage(); await page.addInitScript(() => { localStorage.setItem('gf-intro-done', '1'); localStorage.setItem('gf-more-review', '1'); localStorage.setItem('gf-more-obj', '1'); });
 page.on('pageerror', (e) => console.log('PAGEERR', e.message));
 await page.goto(URL); await page.waitForFunction(() => window.__gfReady); fs.mkdirSync('screenshots/real', { recursive: true });
 for (const f of files) {

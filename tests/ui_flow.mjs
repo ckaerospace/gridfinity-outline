@@ -3,7 +3,7 @@ import fs from 'fs';
 const URL = process.env.URL || 'http://localhost:8123/';
 const browser = await chromium.launch({ args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'] });
 const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, hasTouch: true, isMobile: true, acceptDownloads: true, colorScheme: process.env.SCHEME || 'dark' });
-const page = await ctx.newPage();
+const page = await ctx.newPage(); await page.addInitScript(() => { localStorage.setItem('gf-intro-done', '1'); localStorage.setItem('gf-more-review', '1'); localStorage.setItem('gf-more-obj', '1'); });
 const errs = []; page.on('pageerror', (e) => errs.push(e.message)); page.on('console', (m) => { if (m.type() === 'error') errs.push(m.text()); });
 const shot = (n) => page.screenshot({ path: `screenshots/${n}.png` });
 await page.goto(URL); await page.waitForFunction(() => window.__gfReady); await page.evaluate(() => { localStorage.clear(); });
@@ -21,7 +21,7 @@ await capture('tests/synth/wrench_steel_t20_s107.jpg', 'review');
 await capture('tests/synth/rect50x30_red_t35_s102.jpg');
 await capture('tests/synth/circle40_dark_t15_s104.jpg');
 // per-object depth: select object 2 -> set depth 10 via number field; object 1 depth 28 via slider/number
-const setNum = async (label, v) => { const row = page.locator('.row', { hasText: label }).first(); await row.locator('input[type=number]').fill(String(v)); await row.locator('input[type=number]').dispatchEvent('change'); await page.waitForTimeout(100); };
+const setNum = async (label, v) => { await page.evaluate(() => document.querySelectorAll('#objPanel details.more').forEach((d) => { d.open = true; localStorage.setItem('gf-more-obj', '1'); })); const row = page.locator('.row', { hasText: label }).first(); await row.locator('input[type=number]').fill(String(v)); await row.locator('input[type=number]').dispatchEvent('change'); await page.waitForTimeout(100); };
 await page.locator('.chip').nth(0).click(); await setNum('Depth', 28);
 await page.locator('.chip').nth(1).click(); await setNum('Depth', 10); await setNum('Margin', 3);
 await page.locator('.chip').nth(2).click(); await setNum('Depth', 18);

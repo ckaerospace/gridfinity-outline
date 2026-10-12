@@ -2,7 +2,7 @@ import { chromium } from 'playwright';
 const URL = process.env.URL || 'http://localhost:8123/';
 const browser = await chromium.launch({ args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'] });
 const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, hasTouch: true, isMobile: true });
-const page = await ctx.newPage(); const errs = []; page.on('pageerror', (e) => errs.push(e.message));
+const page = await ctx.newPage(); await page.addInitScript(() => { localStorage.setItem('gf-intro-done', '1'); localStorage.setItem('gf-more-review', '1'); localStorage.setItem('gf-more-obj', '1'); }); const errs = []; page.on('pageerror', (e) => errs.push(e.message));
 await page.goto(URL); await page.waitForFunction(() => window.__gfReady);
 await page.click('#btnAdd'); await page.waitForSelector('#fLib', { state: 'attached' });
 await page.setInputFiles('#fLib', process.env.IMG || 'tests/synth/wrench_steel_t20_s107.jpg'); await page.waitForSelector('#rCv', { timeout: 60000 }); await page.waitForTimeout(400);
@@ -44,7 +44,7 @@ z = await Z(); ok('double-tap again resets', z.z === 1);
 // tap accuracy at 4x and 8x, several modes
 async function tapTest(zoom, mode, label) {
   await page.click('#zFit'); await page.evaluate((zm) => { const c = document.querySelector('#rCv'); __gfZoom.zoomAt(c.clientWidth * 0.62, c.clientHeight * 0.55, zm); }, zoom);
-  await page.click(`#rModes [data-m="${mode}"]`); await page.evaluate(() => { __gfZoom.lastTap = null; document.querySelector('#rCv').scrollIntoView({ block: 'center' }); }); await sleep(100);
+  await page.click(`[data-m="${mode}"]`); await page.evaluate(() => { __gfZoom.lastTap = null; document.querySelector('#rCv').scrollIntoView({ block: 'center' }); }); await sleep(100);
   const worst = [];
   for (const [fx, fy] of [[0.3, 0.3], [0.7, 0.45], [0.5, 0.8], [0.2, 0.65]]) {
     await page.evaluate(() => document.querySelector('#rCv').scrollIntoView({ block: 'center' })); await sleep(60);
@@ -79,7 +79,7 @@ for (const zm of [4, 8]) {
   ok(`landmark tap lands on drawn outline at ${zm}x (overlay aligned with mapping)`, best < 1, 'distance to outline ' + best.toFixed(3) + ' img px');
 }
 // desktop-style: mouse wheel + drag + click mapping
-const dctx = await browser.newContext({ viewport: { width: 1000, height: 900 } }); const dp = await dctx.newPage();
+const dctx = await browser.newContext({ viewport: { width: 1000, height: 900 } }); const dp = await dctx.newPage(); await dp.addInitScript(() => { localStorage.setItem('gf-intro-done', '1'); localStorage.setItem('gf-more-review', '1'); });
 await dp.goto(URL); await dp.waitForFunction(() => window.__gfReady); await dp.click('#btnAdd'); await dp.setInputFiles('#fLib', process.env.IMG || 'tests/synth/wrench_steel_t20_s107.jpg'); await dp.waitForSelector('#rCv', { timeout: 60000 }); await dp.waitForTimeout(400);
 const db = await dp.locator('#rCv').boundingBox(); await dp.mouse.move(db.x + db.width / 2, db.y + db.height / 2); await dp.mouse.wheel(0, -600); await dp.waitForTimeout(100);
 const dz = await dp.evaluate(() => __gfZoom.V.z); ok('wheel zooms (desktop)', dz > 1.5, 'z=' + dz.toFixed(2));

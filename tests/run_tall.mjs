@@ -1,7 +1,7 @@
 // Tall-object tests: renders in tests/tall (tools/synth.py tall tests/tall). Runs the real app; sets 'Object height' to the true height and records raw and corrected outlines.
 import { chromium } from 'playwright'; import fs from 'fs';
 const URL = process.env.URL || 'http://localhost:8123/', dir = 'tests/tall', gt = JSON.parse(fs.readFileSync(dir + '/gt.json'));
-const browser = await chromium.launch(); const page = await (await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true })).newPage();
+const browser = await chromium.launch(); const page = await (await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true })).newPage(); await page.addInitScript(() => { localStorage.setItem('gf-intro-done', '1'); localStorage.setItem('gf-more-review', '1'); localStorage.setItem('gf-more-obj', '1'); });
 page.on('pageerror', (e) => console.log('PAGEERR', e.message));
 await page.goto(URL); await page.waitForFunction(() => window.__gfReady); const out = [];
 for (const c of gt) {

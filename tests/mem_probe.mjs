@@ -1,6 +1,6 @@
 // Peak WebAssembly memory during Smart select. usage: PWB=webkit|chromium node tests/mem_probe.mjs [photo]
 import * as pw from 'playwright';
-const b = await pw[process.env.PWB || 'chromium'].launch(); const page = await (await b.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true, serviceWorkers: 'block' })).newPage();
+const b = await pw[process.env.PWB || 'chromium'].launch(); const page = await (await b.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true, serviceWorkers: 'block' })).newPage(); await page.addInitScript(() => { localStorage.setItem('gf-intro-done', '1'); localStorage.setItem('gf-more-review', '1'); localStorage.setItem('gf-more-obj', '1'); });
 await page.addInitScript(() => { window.__mem = []; const g = WebAssembly.Memory.prototype.grow; WebAssembly.Memory.prototype.grow = function (n) { const r = g.call(this, n); window.__mem.push(Math.round(this.buffer.byteLength / 1048576)); return r; };
 });
 page.on('pageerror', (e) => console.log('PAGEERR', e.message));

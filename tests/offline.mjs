@@ -1,6 +1,6 @@
 import { chromium } from 'playwright';
 const browser = await chromium.launch(); const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
-const page = await ctx.newPage(); await page.goto('http://localhost:8123/'); await page.waitForFunction(() => window.__gfReady);
+const page = await ctx.newPage(); await page.addInitScript(() => { localStorage.setItem('gf-intro-done', '1'); localStorage.setItem('gf-more-review', '1'); localStorage.setItem('gf-more-obj', '1'); }); await page.goto('http://localhost:8123/'); await page.waitForFunction(() => window.__gfReady);
 await page.evaluate(async () => { await navigator.serviceWorker.ready; }); await page.waitForTimeout(2500);
 const cached = await page.evaluate(async () => (await (await caches.open('gf-outline-v1')).keys()).length);
 await ctx.setOffline(true); await page.reload(); await page.waitForFunction(() => window.__gfReady, null, { timeout: 15000 });

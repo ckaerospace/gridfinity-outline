@@ -1,7 +1,7 @@
 import { chromium } from 'playwright';
 import fs from 'fs';
 const gt = JSON.parse(fs.readFileSync('tests/synth/gt_manual.json'));
-const browser = await chromium.launch(); const page = await (await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true })).newPage();
+const browser = await chromium.launch(); const page = await (await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true })).newPage(); await page.addInitScript(() => { localStorage.setItem('gf-intro-done', '1'); localStorage.setItem('gf-more-review', '1'); localStorage.setItem('gf-more-obj', '1'); });
 await page.goto('http://localhost:8123/'); await page.waitForFunction(() => window.__gfReady);
 const out = [];
 for (const [mode, hv] of [['height given', 225], ['height estimated', 0]]) for (const c of gt) {

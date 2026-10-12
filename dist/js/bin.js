@@ -3,7 +3,10 @@ import Module from '../vendor/manifold.js';
 import { bbox, rotPt, pointAtT, ensureCCW } from './geom.js';
 
 export const GF = { pitch: 42, hUnit: 7, clearance: 0.5, topR: 3.75, foot: { chamfer1: 0.8, vert: 1.8, chamfer2: 2.15 }, wall: 1.2, maxUnits: 12 };
-GF.minFloorAboveFoot = 0.8; // min material between foot-groove top (z=4.75) and pocket floor
+GF.minFloorAboveFoot = 0.8;
+GF.lip = { c1: 0.7, vert: 1.8, c2: 1.9 }; GF.lipH = 4.4; GF.lipWall = 2.6; // standard stacking lip profile (bottom 45deg 0.7, vertical 1.8, top 45deg 1.9); pockets keep 2.6 mm from the outside
+GF.magnet = { d: 6.5, depth: 2.4, offset: 13 }; // holes for 6 x 2 mm magnets, 4 per cell on a 26 mm square
+export const outerWall = (project) => (project && project.lip ? GF.lipWall : GF.wall); // min material between foot-groove top (z=4.75) and pocket floor
 GF.footH = GF.foot.chamfer1 + GF.foot.vert + GF.foot.chamfer2; // 4.75
 let M = null;
 export const getM = () => M;
@@ -28,6 +31,18 @@ function footSolid(cx, cy) {
   for (let i = 0; i < n; i++) { const j = (i + 1) % n; tv.push(ib, j, i); tv.push(it, 3 * n + i, 3 * n + j); }
   return new M.Manifold(new M.Mesh({ numProp: 3, vertProperties: new Float32Array(vp), triVerts: new Uint32Array(tv) }));
 }
+// stacking lip: ring on top of the bin, inner face = Gridfinity lip profile (mirrors the baseplate socket), small 0.4 mm flat on top instead of a knife edge
+function lipSolid(W, D, H) {
+  const L = GF.lip, top = 0.4, ring = (inset, z) => rrect(inset, inset, W - 2 * inset, D - 2 * inset, Math.max(0.05, GF.topR - inset), 12).map(([x, y]) => [x, y, z]);
+  const loft = (rings) => { const n = rings[0].length, vp = [], tv = [], last = rings.length - 1; for (const r of rings) for (const p of r) vp.push(...p);
+    const cen = (r) => r.reduce((a, p) => [a[0] + p[0] / n, a[1] + p[1] / n, p[2]], [0, 0, 0]); const ib = rings.length * n, it = ib + 1; vp.push(...cen(rings[0]), ...cen(rings[last]));
+    for (let k = 0; k < last; k++) for (let i = 0; i < n; i++) { const j = (i + 1) % n, a = k * n + i, a2 = k * n + j, b = (k + 1) * n + i, b2 = (k + 1) * n + j; tv.push(a, a2, b2, a, b2, b); }
+    for (let i = 0; i < n; i++) { const j = (i + 1) % n; tv.push(ib, j, i); tv.push(it, last * n + i, last * n + j); }
+    return new M.Manifold(new M.Mesh({ numProp: 3, vertProperties: new Float32Array(vp), triVerts: new Uint32Array(tv) })); };
+  const outer = cs(rrect(0, 0, W, D, GF.topR, 12)).extrude(GF.lipH + 0.01).translate([0, 0, H - 0.01]);
+  const z = H - 0.02, inner = loft([ring(L.c1 + L.c2, z), ring(L.c2, H + L.c1), ring(L.c2, H + L.c1 + L.vert), ring(top, H + GF.lipH), ring(top, H + GF.lipH + 1)]);
+  return outer.subtract(inner);
+}
 const cs = (poly) => M.CrossSection.ofPolygons([ensureCCW(poly)], 'Positive');
 
 export function effective(project, o) {
@@ -42,7 +57,7 @@ function worldXf(x, o) { return x.rotate(o.rot || 0).translate([o.x, o.y]); }
 
 // Analyse project: effective values, bin size, issues. Returns plain data + CrossSections (caller keeps them only transiently).
 export function analyze(project) {
-  const { wall } = GF, floor = Math.max(project.floor, GF.footH + GF.minFloorAboveFoot); // pocket floor must stay above the foot grooves (z = footH), else the cut opens slots along the cell boundaries
+  const wall = outerWall(project), floor = Math.max(project.floor, GF.footH + GF.minFloorAboveFoot); // pocket floor must stay above the foot grooves (z = footH), else the cut opens slots along the cell boundaries
   const items = project.objects.map((o) => {
     const eff = effective(project, o), pk = worldXf(localPocket(o, eff.margin), o), b = pk.bounds();
     return { o, eff, pk, b };
@@ -62,13 +77,13 @@ export function analyze(project) {
     if (it.eff.depth > maxDepth + 1e-6) issues.push('depth clamped to ' + maxDepth.toFixed(1) + ' mm');
     if (it.pk.subtract(inner).area() > 0.05) issues.push('outside bin');
     for (let j = 0; j < items.length; j++) if (j !== i) {
-      const a = it.pk.offset(wall / 2, 'Round', 2, 12), c = items[j].pk.offset(wall / 2, 'Round', 2, 12);
+      const a = it.pk.offset(GF.wall / 2, 'Round', 2, 12), c = items[j].pk.offset(GF.wall / 2, 'Round', 2, 12);
       if (a.intersect(c).area() > 0.05) { issues.push('overlaps ' + (items[j].o.name || 'object ' + (j + 1))); break; }
     }
     const poly = it.pk.toPolygons()[0] || [];
     return { id: it.o.id, eff: { ...it.eff, depth }, requestedDepth: it.eff.depth, poly, issues, bounds: it.b };
   });
-  return { nx, ny, W, D, hu, H, maxDepth, objects: res, _items: items };
+  return { nx, ny, W, D, hu, H, maxDepth, wall, Htot: H + (project.lip ? GF.lipH : 0), objects: res, _items: items };
 }
 
 export function buildBin(project, an, info) {
@@ -77,6 +92,11 @@ export function buildBin(project, an, info) {
   for (let i = 0; i < an.nx; i++) for (let j = 0; j < an.ny; j++) feet.push(footSolid(GF.pitch * i + GF.pitch / 2 - GF.clearance / 2, GF.pitch * j + GF.pitch / 2 - GF.clearance / 2));
   const body = cs(rrect(0, 0, W, D, GF.topR, 12)).extrude(H - GF.footH).translate([0, 0, GF.footH]);
   let bin = M.Manifold.union([...feet, body]);
+  if (project.lip) bin = bin.add(lipSolid(W, D, H));
+  if (project.magnets) { const holes = [];
+    for (let i = 0; i < an.nx; i++) for (let j = 0; j < an.ny; j++) { const cx = GF.pitch * i + GF.pitch / 2 - GF.clearance / 2, cy = GF.pitch * j + GF.pitch / 2 - GF.clearance / 2;
+      for (const [sx, sy] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) holes.push(M.Manifold.cylinder(GF.magnet.depth + 0.01, GF.magnet.d / 2, GF.magnet.d / 2, 40).translate([cx + sx * GF.magnet.offset, cy + sy * GF.magnet.offset, -0.01])); }
+    bin = bin.subtract(M.Manifold.union(holes)); }
   const cuts = [];
   const flip = (xs) => xs.mirror([0, 1]).translate([0, D]);
   an._items.forEach((it, i) => {
@@ -90,7 +110,7 @@ export function buildBin(project, an, info) {
       const wx = lx + it.o.x, wy = D - (ly + it.o.y);
       const sph = M.Manifold.sphere(r, 32).translate([wx, wy, zc]);
       const parts = [sph];
-      if (H + 1 > zc) parts.push(M.Manifold.cylinder(H + 1 - zc, r, r, 32).translate([wx, wy, zc]));
+      if (H + 6 > zc) parts.push(M.Manifold.cylinder(H + 6 - zc, r, r, 32).translate([wx, wy, zc]));
       cuts.push(M.Manifold.union(parts));
     }
   });
@@ -165,14 +185,14 @@ export function toSTL(man, name = 'gridfinity-outline') {
 
 // ---- auto placement ----
 function candidateOk(project, an, cand, nxy, ignoreIdx = -1) {
-  const { wall } = GF, W = nxy[0] * GF.pitch - GF.clearance, D = nxy[1] * GF.pitch - GF.clearance;
+  const wall = outerWall(project), W = nxy[0] * GF.pitch - GF.clearance, D = nxy[1] * GF.pitch - GF.clearance;
   const b = cand.bounds();
   if (b.min[0] < wall || b.min[1] < wall || b.max[0] > W - wall || b.max[1] > D - wall) return false;
-  const ex = cand.offset(wall / 2, 'Round', 2, 8), eb = ex.bounds();
+  const ex = cand.offset(GF.wall / 2, 'Round', 2, 8), eb = ex.bounds();
   for (let j = 0; j < an._items.length; j++) { if (j === ignoreIdx) continue;
     const o = an._items[j], ob = o.b;
-    if (ob.min[0] - wall > eb.max[0] || ob.max[0] + wall < eb.min[0] || ob.min[1] - wall > eb.max[1] || ob.max[1] + wall < eb.min[1]) continue;
-    if (ex.intersect(o.pk.offset(wall / 2, 'Round', 2, 8)).area() > 0.05) return false; }
+    if (ob.min[0] - GF.wall > eb.max[0] || ob.max[0] + GF.wall < eb.min[0] || ob.min[1] - GF.wall > eb.max[1] || ob.max[1] + GF.wall < eb.min[1]) continue;
+    if (ex.intersect(o.pk.offset(GF.wall / 2, 'Round', 2, 8)).area() > 0.05) return false; }
   return true;
 }
 // Find a free position for object `o` (outline local, centred) near (px,py) (or scanning when null). Returns {x,y,rot} or null.
@@ -188,7 +208,7 @@ export function findSpot(project, o, near, ignoreId = null) {
     const W = nxy[0] * GF.pitch - GF.clearance, D = nxy[1] * GF.pitch - GF.clearance;
     const cands = [];
     if (near) { for (let r = 0; r <= 60; r += 1) for (let a = 0; a < (r ? 16 : 1); a++) { const ang = a / 16 * 2 * Math.PI; cands.push([near[0] + r * Math.cos(ang), near[1] + r * Math.sin(ang), rots[0]]); } }
-    else for (const rot of rots) for (let y = GF.wall; y < D; y += 2) for (let x = GF.wall; x < W; x += 2) cands.push([x, y, rot]);
+    else for (const rot of rots) for (let y = outerWall(project); y < D; y += 2) for (let x = outerWall(project); x < W; x += 2) cands.push([x, y, rot]);
     for (const [cxm, cym, rot] of cands) {
       const rb = base.rotate(rot), bb = rb.bounds();
       const tx = near ? cxm : cxm - bb.min[0], ty = near ? cym : cym - bb.min[1];

@@ -5,24 +5,27 @@ import { bbox, centroid, minRect, cameraFromH, correctForHeight } from './geom.j
 const $ = (h) => { const t = document.createElement('template'); t.innerHTML = h.trim(); return t.content.firstChild; };
 export const debug = { last: null };
 
-export function openCapture(root, { depth = 20, title = 'Add object' } = {}) {
+export function openCapture(root, { depth = 20, title = 'Add object', onStep = () => {} } = {}) {
   return new Promise((resolve) => {
-    let cv = null, photo = null, cal = null, rect = null, seg = null, res = null, edits = [], pick = null, tol = 24, shadow = 85, mode = 'pick', closed = false, objH = 0, cam = null, smoothV = SMOOTH_DEFAULT, smartSess = null, smartPts = [], smartBusy = false, smartOff = false;
-    const done = (v) => { if (closed) return; closed = true; if (rect) rect.mat.delete(); root.hidden = true; root.innerHTML = ''; resolve(v); };
+    let cv = null, photo = null, cal = null, rect = null, seg = null, res = null, edits = [], pick = null, tol = 24, shadow = 85, mode = 'pick', closed = false, objH = 0, cam = null, smoothV = SMOOTH_DEFAULT, smartSess = null, smartPts = [], smartBusy = false, smartOff = false, ruler = [], shadowFallback = false;
+    const done = (v) => { if (closed) return; closed = true; onStep(null); if (rect) rect.mat.delete(); root.hidden = true; root.innerHTML = ''; resolve(v); };
     root.hidden = false;
-    const head = (t) => `<div class="ov-head"><h2>${t}</h2><button class="ghost" data-x>Cancel</button></div>`;
-    const bindX = () => root.querySelector('[data-x]').onclick = () => done(null);
+    let curStep = 'photo'; const setStep = (st) => { curStep = st; onStep(st); };
+    const stepsNav = () => `<nav class="steps">${[['photo', 'Photo'], ['outline', 'Outline'], ['bin', 'Bin'], ['export', 'Export']].map(([k, l], i) => `<button data-cstep="${k}" class="${k === curStep ? 'on' : ''}${i < ['photo', 'outline', 'bin', 'export'].indexOf(curStep) ? ' done' : ''}"><i>${i + 1}</i>${l}</button>`).join('')}</nav>`;
+    const head = (t) => `<div class="ov-head"><button class="ghost" data-x>Cancel</button><h2>${t}</h2><span class="sp"></span></div>` + stepsNav();
+    const bindX = () => { root.querySelector('[data-x]').onclick = () => done(null);
+      root.querySelectorAll('[data-cstep]').forEach((b) => b.onclick = () => { const k = b.dataset.cstep; if (k === 'photo' && curStep !== 'photo') stepPick(); else if (k === 'bin' || k === 'export') done(null); }); };
 
     function stepPick(msg) {
+      setStep('photo');
       root.innerHTML = head(title) + `<div class="ov-body">
         ${msg ? `<div class="err">${msg}</div>` : ''}
         <input id="fCam" type="file" accept="image/*" capture="environment" hidden>
         <input id="fLib" type="file" accept="image/*" hidden>
         <button class="big-btn p" id="bCam">Take photo</button>
         <button class="big-btn" id="bLib">Photo library</button>
-        <p class="note">Place the object flat on the printed sheet, all four corner markers in view. The photo stays on this device.</p>
-        <ul class="note" style="margin:6px 0 10px 18px;padding:0"><li>Shoot from far away and zoom in, with the camera straight above the object centre: a tall object looks bigger when the camera is close or off to the side.</li><li>Even, shaded light works best: no direct lamp, avoid hard shadows.</li><li>Shooting from straight above is more accurate than at an angle.</li></ul>
-        <a class="link" href="sheet.html">Print the calibration sheet</a></div>`;
+        <ul class="tips"><li><b>All four corner markers</b> in view, object flat on the sheet.</li><li><b>Straight from above</b>, step back and zoom in a little.</li><li><b>Soft, even light.</b> Shade beats direct sun or a lamp.</li></ul>
+        <p class="note">The photo never leaves this device. <a class="link inl" href="sheet.html">Print the sheet</a></p></div>`;
       bindX();
       const go = (f) => f && process(f);
       root.querySelector('#fCam').onchange = (e) => go(e.target.files[0]); root.querySelector('#fLib').onchange = (e) => go(e.target.files[0]);
@@ -40,7 +43,7 @@ export function openCapture(root, { depth = 20, title = 'Add object' } = {}) {
         busy('Finding the sheet'); await new Promise((r) => setTimeout(r, 20));
         const t1 = performance.now(); cal = detectSheet(cv, photo.imageData); T.detect = performance.now() - t1;
         debug.last = { cal: { ...cal, markers: undefined }, photo: { w: photo.w, h: photo.h, origW: photo.origW, origH: photo.origH } };
-        if (!cal.ok) { debug.last.timing = T; return stepManual(`Found ${cal.found} of 4 sheet markers.`); }
+        if (!cal.ok) { debug.last.timing = T; return stepManual(cal.found); }
         await finish(T, t0);
       } catch (e) { console.error(e); stepPick('Could not process this photo: ' + (e.message || e)); }
     }
@@ -52,7 +55,8 @@ export function openCapture(root, { depth = 20, title = 'Add object' } = {}) {
       const t3 = performance.now(); shadow = SHADOW_DEFAULT; seg = prepareSeg(cv, rect, shadow); T.prep = performance.now() - t3;
       tol = Math.round(seg.autoTol); edits = []; pick = null; mode = 'pick';
       const t4 = performance.now(); runSeg();
-      for (const alt of [40, 0]) { if (res.ok) break; shadow = alt; computeDist(seg, shadow); tol = Math.round(seg.autoTol); runSeg(); }
+      shadowFallback = false; ruler = [];
+      for (const alt of [40, 0]) { if (res.ok) break; shadowFallback = true; shadow = alt; computeDist(seg, shadow); tol = Math.round(seg.autoTol); runSeg(); }
       /* nothing found: shadow removal may have erased a dark object */
       T.segment = performance.now() - t4; T.total = performance.now() - t0;
       debug.last.timing = T; debug.last.tol = tol; debug.last.shadow = shadow; debug.last.outline = res.outline; debug.last.rectSize = [rect.w, rect.h]; debug.last.cam = cam; debug.rectMat = rect.mat; debug.seg = seg;
@@ -61,10 +65,11 @@ export function openCapture(root, { depth = 20, title = 'Add object' } = {}) {
     function runSeg() { if (res && res.mask) res.mask.delete(); res = segment(cv, seg, tol, edits, pick, smoothV); debug.last && (debug.last.outline = res.outline); }
 
     // ---------- manual calibration ----------
-    function stepManual(msg) {
+    function stepManual(found) {
+      setStep('outline');
       const pts = [], names = ['top-left', 'top-right', 'bottom-right', 'bottom-left'];
-      root.innerHTML = head('Calibrate manually') + `<div class="ov-body">
-        ${msg ? `<div class="warn">${msg} Tap four corners of a rectangle with known size (a cutting mat, or the sheet's marker centres), in order, then enter its size. Or <a class="link" href="#" id="aRetry" style="padding:0">retake the photo</a>.</div>` : ''}
+      root.innerHTML = head('Find the sheet') + `<div class="ov-body">
+        <div class="hintbox"><b>Couldn't find the sheet corners${found != null ? ` (saw ${found} of 4)` : ''}.</b> Usually one is cut off, covered, or washed out by glare. Step back so all four black corner markers are visible and <a class="link inl" href="#" id="aRetry">retake the photo</a>.<br><span class="muted">Or tap four corners of a rectangle you know the size of, in order, and enter its size.</span></div>
         <div class="note" id="mNext"></div>
         <div class="canvaswrap" id="mWrap"><canvas id="mCv"></canvas></div>
         <div class="row" style="grid-template-columns:1fr 1fr"><div><label class="note">Width (mm), top edge</label><input id="mW" type="number" inputmode="decimal" min="1" step="any" placeholder="required"></div>
@@ -101,6 +106,7 @@ export function openCapture(root, { depth = 20, title = 'Add object' } = {}) {
       if (res && res.touchesEdge) w.push('The object touches the edge of the measured area; it may be cut off.');
       return w;
     }
+    const rulerMM = () => ruler.length === 2 ? Math.hypot(ruler[1][0] - ruler[0][0], ruler[1][1] - ruler[0][1]) / rect.s : 0;
     const corrOutline = () => correctForHeight(res.outline, cam, objH);
     function sizeText() {
       const r = minRect(res.outline); let t = `Measured ${r.l.toFixed(1)} x ${r.w.toFixed(1)} mm (long x short side, minimum rectangle), ${res.areaMM2.toFixed(0)} mm\u00b2 (before margin). Axis-aligned box ${res.bbox.w.toFixed(1)} x ${res.bbox.h.toFixed(1)} mm.`;
@@ -115,19 +121,24 @@ export function openCapture(root, { depth = 20, title = 'Add object' } = {}) {
     }
     function stepReview() {
       const u = res.ok ? res : null;
+      setStep('outline'); const moreOpen = localStorage.getItem('gf-more-review') === '1';
       root.innerHTML = head('Check outline') + `<div class="ov-body">
         <div id="rWarn"></div>
         <div class="canvaswrap" id="rWrap"><canvas id="rCv"></canvas><div class="zoomctl"><button id="zIn" aria-label="Zoom in">+</button><button id="zOut" aria-label="Zoom out">−</button><button id="zFit">Fit</button><span id="zLbl">1x</span></div></div>
-        <div class="note" id="rZoomHint">Zoom: pinch or two-finger drag, double-tap, mouse wheel, or the + / − buttons. When zoomed, drag with one finger to move the image; a short tap selects.</div>
+        <div class="seg modes" id="rModes"><button data-m="pick">Select</button><button data-m="smart">Smart</button><button data-m="measure">Measure</button></div>
         <div class="note" id="rInfo"></div>
+        <div class="note" id="rHint"></div>
+        <details class="more" id="rMore" ${moreOpen ? 'open' : ''}><summary>More</summary>
         <div class="row"><label>Tolerance</label><input id="rTol" type="range" min="4" max="80" step="1"><div class="num"><input id="rTolN" type="number" min="4" max="80" step="1"></div></div>
         <div class="row"><label>Remove shadow</label><input id="rSh" type="range" min="0" max="100" step="1"><div class="num"><input id="rShN" type="number" min="0" max="100" step="1"></div></div>
         <div class="row"><label>Smoothing</label><input id="rSm" type="range" min="0" max="100" step="1"><div class="num"><input id="rSmN" type="number" min="0" max="100" step="1"></div></div>
-        <div class="row"><label>Object height (mm)</label><input id="rH" type="range" min="0" max="80" step="0.5"><div class="num"><input id="rHN" type="number" min="0" max="80" step="0.5"></div></div>
+        <div class="row"><label>Object height</label><input id="rH" type="range" min="0" max="80" step="0.5"><div class="num"><input id="rHN" type="number" min="0" max="80" step="0.5"><span class="unit">mm</span></div></div>
         <p class="note" id="rHNote"></p>
-        <div class="actions" id="rModes"><button data-m="pick">Select</button><button data-m="add">Add area</button><button data-m="remove">Remove area</button><button data-m="smart">Smart select</button><button data-m="smartneg">Smart: exclude</button><button id="rAuto">Auto</button></div>
-        <p class="note">Select: tap the object (zoom in first for small parts). Add or Remove: tap a region of similar colour to include or drop it. Smart select (optional AI model, about 45 MB download the first time, runs on this device): tap the object, then use Smart: exclude and tap anything wrongly included, such as a shadow. Auto goes back to the classic method. Raise tolerance if the outline is too small, lower it if it grabs the sheet. Raise Remove shadow if the outline includes a shadow; lower it if a dark object is cut off.</p>
-        <div class="actions"><button id="rRetake">Retake</button><button id="rUse" class="on" style="background:var(--tx);color:var(--bg)">Use outline</button></div></div>`;
+        <div class="actions" id="rModes2"><button data-m="add">Add area</button><button data-m="remove">Remove area</button><button data-m="smartneg">Smart: exclude</button><button id="rAuto">Reset to auto</button></div>
+        <p class="note">Select: tap the object. Smart: on-device AI (about 45 MB the first time); tap the object, then Smart: exclude on anything wrongly included. Measure: tap two points to check a distance. Zoom with pinch, double-tap or + / −.</p>
+        </details></div>
+        <div class="ov-foot"><button id="rRetake" class="secondary">Retake</button><button id="rUse" class="primary">Use outline</button></div>`;
+      root.querySelector('#rMore').ontoggle = (e) => localStorage.setItem('gf-more-review', e.target.open ? '1' : '0');
       bindX(); const c = root.querySelector('#rCv'); const wrap = root.querySelector('#rWrap');
       c.style.aspectRatio = rect.w + ' / ' + rect.h;
       // ---- zoom / pan view: screen(css px) = img(px) * k * z + t ; canvas backing store is CSS size x devicePixelRatio, drawn from the full straightened image ----
@@ -144,6 +155,11 @@ export function openCapture(root, { depth = 20, title = 'Add object' } = {}) {
         ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.drawImage(base, V.tx, V.ty, rect.w * k * V.z, rect.h * k * V.z);
         if (res.ok) { tracePath(ctx, res.outline, k); ctx.lineWidth = 2; ctx.lineJoin = 'round'; ctx.strokeStyle = '#7db4ff'; ctx.stroke(); }
         if (res.ok && objH > 0 && cam) { tracePath(ctx, corrOutline(), k); ctx.setLineDash([6, 4]); ctx.lineWidth = 2; ctx.strokeStyle = '#ffb347'; ctx.stroke(); ctx.setLineDash([]); }
+        if (ruler.length) { const sp = ruler.map(([x, y]) => [x * k * V.z + V.tx, y * k * V.z + V.ty]); ctx.strokeStyle = '#ffd34d'; ctx.fillStyle = '#ffd34d'; ctx.lineWidth = 2;
+          if (sp.length === 2) { ctx.beginPath(); ctx.moveTo(...sp[0]); ctx.lineTo(...sp[1]); ctx.stroke(); }
+          sp.forEach((p) => { ctx.beginPath(); ctx.arc(p[0], p[1], 5, 0, 7); ctx.fill(); });
+          if (sp.length === 2) { const t = rulerMM().toFixed(1) + ' mm', mx = (sp[0][0] + sp[1][0]) / 2, my = (sp[0][1] + sp[1][1]) / 2; ctx.font = '600 14px system-ui,sans-serif'; const w = ctx.measureText(t).width + 14;
+            ctx.fillStyle = 'rgba(0,0,0,.75)'; ctx.beginPath(); ctx.roundRect(mx - w / 2, my - 24, w, 22, 11); ctx.fill(); ctx.fillStyle = '#ffd34d'; ctx.fillText(t, mx - w / 2 + 7, my - 8); } }
         const l = root.querySelector('#zLbl'); if (l) l.textContent = (Math.round(V.z * 10) / 10) + 'x';
         debug.view = { z: V.z, tx: V.tx, ty: V.ty, k };
       };
@@ -160,10 +176,14 @@ export function openCapture(root, { depth = 20, title = 'Add object' } = {}) {
         tolR.value = tolN.value = tol; shR.value = shN.value = shadow;
         draw();
         debug.last && (debug.last.outlineCorr = res.ok ? (objH > 0 && cam ? corrOutline() : res.outline) : null); smR.value = smN.value = smoothV; hR.value = hN.value = objH; root.querySelector('#rHNote').textContent = heightNote();
-        root.querySelector('#rInfo').textContent = res.ok ? sizeText() : 'No object found. Try a different tolerance.';
+        root.querySelector('#rInfo').textContent = mode === 'measure' ? (ruler.length === 2 ? `Distance ${rulerMM().toFixed(1)} mm. Tap again to measure something else.` : ruler.length ? 'Tap the second point.' : 'Tap two points to measure the distance between them.') : res.ok ? sizeText() : 'No object found.';
+        debug.ruler = ruler.length === 2 ? rulerMM() : null;
+        root.querySelector('#rHint').innerHTML = !res.ok ? '<div class="hintbox"><b>Nothing traced.</b> Tap the object, try <b>Smart</b>, or raise <b>Tolerance</b> under More.</div>'
+          : shadowFallback ? '<div class="hintbox"><b>Looks like a dark object or a strong shadow.</b> Shadow removal was turned down so the object stays whole. If the outline includes the shadow, try <b>Smart</b> or raise <b>Remove shadow</b> under More.</div>'
+          : '<span class="muted">Outline bigger than the object? It probably includes a shadow: try <b>Smart</b>, or raise <b>Remove shadow</b> under More.</span>';
         root.querySelector('#rUse').disabled = !res.ok;
-        root.querySelector('#rWarn').innerHTML = warnings().map((t) => `<div class="warn" style="margin-bottom:6px">${t}</div>`).join('');
-        root.querySelectorAll('#rModes [data-m]').forEach((b) => b.classList.toggle('on', b.dataset.m === mode));
+        { const w = warnings(); root.querySelector('#rWarn').innerHTML = !w.length ? '' : w.length === 1 ? `<div class="warn">${w[0]}</div>` : `<details class="warn wd"><summary>${w[0]} <u>+${w.length - 1} more</u></summary>${w.slice(1).map((t) => `<p>${t}</p>`).join('')}</details>`; }
+        root.querySelectorAll('#rModes [data-m], #rModes2 [data-m]').forEach((b) => b.classList.toggle('on', b.dataset.m === mode));
       };
       let timer = 0; const rerun = (fast) => { clearTimeout(timer); timer = setTimeout(() => { runSeg(); paint(); }, fast ? 0 : 60); };
       tolR.oninput = () => { tol = +tolR.value; tolN.value = tol; rerun(); }; tolN.onchange = () => { tol = Math.max(4, Math.min(80, +tolN.value || tol)); rerun(true); };
@@ -172,8 +192,9 @@ export function openCapture(root, { depth = 20, title = 'Add object' } = {}) {
       smR.oninput = () => { smoothV = +smR.value; smN.value = smoothV; rerun(); }; smN.onchange = () => { smoothV = Math.max(0, Math.min(100, Math.round(+smN.value || 0))); rerun(true); };
       hR.oninput = () => { objH = +hR.value; hN.value = objH; paint(); }; hN.onchange = () => { objH = Math.max(0, Math.min(80, +hN.value || 0)); paint(); };
       root.querySelector('#rAuto').onclick = () => { if (shadow !== SHADOW_DEFAULT) { shadow = SHADOW_DEFAULT; computeDist(seg, shadow); } tol = Math.round(seg.autoTol); edits = []; pick = null; smartPts = []; seg.smart = null; rerun(true); };
-      root.querySelectorAll('#rModes [data-m]').forEach((b) => b.onclick = () => { mode = b.dataset.m; paint(); });
+      root.querySelectorAll('#rModes [data-m], #rModes2 [data-m]').forEach((b) => b.onclick = () => { mode = b.dataset.m; if (mode !== 'measure') ruler = []; paint(); });
       const act = (x, y) => { window.__gfZoom.lastTap = [x, y];
+        if (mode === 'measure') { if (ruler.length >= 2) ruler = []; ruler.push([x, y]); paint(); return; }
         if (mode === 'smart' || mode === 'smartneg') { doSmart(x, y, mode === 'smart' ? 1 : 0); return; }
         if (mode === 'pick') pick = { x, y }; else edits.push({ type: mode, x, y }); runSeg(); paint(); };
       // gestures: taps (small movement, short) select; 1-pointer drag pans when zoomed; 2 pointers pinch + pan; wheel zooms; double tap toggles zoom
@@ -205,14 +226,17 @@ export function openCapture(root, { depth = 20, title = 'Add object' } = {}) {
         } catch (e0) { console.error(e0); smartPts.pop(); smartSess = null;
           let e = e0; try { const m = await import('./smart.js'); e = m.describeSmartError(e0); } catch (_) {}
           debug.smartErr = String((e0 && e0.message) || e0); debug.smartErrDetails = e.details;
-          if (e.memory) { root.querySelectorAll('#rModes [data-m="smart"], #rModes [data-m="smartneg"]').forEach((b) => { b.disabled = true; b.title = 'Not available on this device'; }); smartOff = true; if (mode === 'smart' || mode === 'smartneg') mode = 'pick'; }
+          if (e.memory) { root.querySelectorAll('[data-m="smart"], [data-m="smartneg"]').forEach((b) => { b.disabled = true; b.title = 'Not available on this device'; }); smartOff = true; if (mode === 'smart' || mode === 'smartneg') mode = 'pick'; }
           paint(); info.innerHTML = ''; const t = document.createElement('span'); t.textContent = e.message || String(e); const d = document.createElement('small'); d.style.cssText = 'display:block;opacity:.7;word-break:break-word'; d.textContent = 'Details: ' + (e.details || e0); info.append(t, d); }
         smartBusy = false;
       }
       root.querySelector('#rRetake').onclick = () => stepPick();
       root.querySelector('#rUse').onclick = () => {
         const outl = objH > 0 && cam ? corrOutline() : res.outline, bb = bbox(outl), cx = (bb.x0 + bb.x1) / 2, cy = (bb.y0 + bb.y1) / 2;
-        done({ outline: outl.map(([x, y]) => [+(x - cx).toFixed(3), +(y - cy).toFixed(3)]), tilt: cal.tilt, areaMM2: res.areaMM2, size: [bb.w, bb.h], objectHeight: objH });
+        let photo = null; try { const sc = Math.min(1, 560 / Math.max(rect.w, rect.h)), t = document.createElement('canvas'), f = document.createElement('canvas'); f.width = rect.w; f.height = rect.h;
+          f.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(rect.mat.data), rect.w, rect.h), 0, 0); t.width = Math.round(rect.w * sc); t.height = Math.round(rect.h * sc);
+          t.getContext('2d').drawImage(f, 0, 0, t.width, t.height); photo = t.toDataURL('image/jpeg', 0.72); f.width = f.height = 0; } catch (_) {}
+        done({ outline: outl.map(([x, y]) => [+(x - cx).toFixed(3), +(y - cy).toFixed(3)]), tilt: cal.tilt, areaMM2: res.areaMM2, size: [bb.w, bb.h], objectHeight: objH, photo });
       };
       paint();
     }
